@@ -425,7 +425,7 @@ async function handleStream(routeType, rawEncodedId) {
   const stremioStreams = streams.map(s => {
     const isHls = s.url.includes('.m3u8');
     return {
-      name: '金牌影院',
+      name: 'JPYY',
       title: `${s.quality}`,
       url: s.url,
       behaviorHints: {
