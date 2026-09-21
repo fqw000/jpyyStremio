@@ -223,9 +223,13 @@ export async function fetchEpisodes(vodId) {
   // ===== 2. 检查 detail 缓存（Meta 可能已经缓存过）=====
   const detailCached = await getCache(`detail:${vodId}`);
   if (detailCached && Array.isArray(detailCached.episodes)) {
-    console.log(`[Adapter] ✅ 从 Detail 缓存提取 Episodes: ${vodId}`);
-    await setCache(cacheKey, detailCached.episodes, 1800);
-    return detailCached.episodes;
+    const eps = detailCached.episodes;
+    console.log(`[Adapter] ✅ 从 Detail 缓存提取 Episodes: ${vodId} (${eps.length} 集)`);
+    // 回填独立 episodes 缓存，加速后续访问
+    if (eps.length > 0) {
+      await setCache(cacheKey, eps, 1800);
+    }
+    return eps;
   }
 
   // ===== 3. 都未命中，直连站点 =====

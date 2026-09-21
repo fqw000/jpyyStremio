@@ -2,13 +2,13 @@
  * 缓存（内存 + Upstash Redis 双层）
  * 
  * 分层策略：
- * - L1: 内存缓存（最快，实例级，命中率低）
- * - L2: Upstash Redis（跨实例，< 10ms）
+ * - L1: 内存缓存（最快，实例级）
+ * - L2: Upstash Redis（跨实例，< 10ms 生产环境）
  * 
- * 容错设计：
- * - Redis 请求超时 3 秒
- * - Redis 失败时静默降级到内存缓存
- * - 不打印重复日志（避免日志污染）
+ * 容错机制：
+ * - Redis 请求 800ms 超时
+ * - 连续慢/失败 3 次后，冷却 60 秒（跳过 Redis，只用内存）
+ * - 冷却期间自动降级到站点请求
  * 
  * @module cache
  */
@@ -23,10 +23,19 @@ const MAX_MEM_SIZE = 200;
 const L1_TTL = 60;
 
 /** Redis 请求超时（毫秒） */
-const REDIS_TIMEOUT = 1500;
+const REDIS_TIMEOUT = 800;
+
+/** Redis 慢响应阈值（毫秒） */
+const REDIS_SLOW_THRESHOLD = 500;
+
+/** Redis 冷却时间（毫秒） */
+const REDIS_COOLDOWN = 60000;
+
+/** 触发冷却的连续慢/失败次数 */
+const REDIS_SLOW_TRIGGER = 3;
 
 // ==========================================
-// Upstash 配置（从环境变量读取）
+// Upstash 配置
 // ==========================================
 
 const UPSTASH_URL = typeof process !== 'undefined'
@@ -54,25 +63,64 @@ function logRedisStatus() {
 }
 
 // ==========================================
-// Upstash REST API（带超时 + 静默降级）
+// Redis 健康状态
 // ==========================================
 
+/** 连续慢/失败次数 */
+let redisSlowCount = 0;
+
+/** 冷却截止时间戳 */
+let redisCooldownUntil = 0;
+
 /**
- * 执行 Redis 命令
- * 
- * 容错策略：
- * - 3 秒超时
- * - 失败时静默返回 null（不打印错误）
- * - 只在首次使用时打印一次启用日志
- * 
- * @param {...string|number} args - Redis 命令参数
- * @returns {Promise<any>} 命令结果，失败返回 null
+ * Redis 是否处于冷却期
  */
+function isRedisInCooldown() {
+  return Date.now() < redisCooldownUntil;
+}
+
+/**
+ * 记录慢/失败，达到阈值触发冷却
+ */
+function recordRedisSlow(elapsed, reason) {
+  redisSlowCount++;
+  if (redisSlowCount >= REDIS_SLOW_TRIGGER) {
+    redisCooldownUntil = Date.now() + REDIS_COOLDOWN;
+    console.warn(
+      `[Cache] ⚠️ Redis ${reason} (${elapsed}ms × ${redisSlowCount})，` +
+      `冷却 ${REDIS_COOLDOWN / 1000} 秒`
+    );
+    redisSlowCount = 0;
+  }
+}
+
+/**
+ * 记录成功，重置慢计数
+ */
+function recordRedisOk(elapsed) {
+  if (elapsed <= REDIS_SLOW_THRESHOLD) {
+    redisSlowCount = 0;
+  } else {
+    // 成功了但较慢，仍计入慢统计
+    recordRedisSlow(elapsed, '慢响应');
+  }
+}
+
+// ==========================================
+// Upstash REST API（带冷却机制）
+// ==========================================
+
 async function redisCommand(...args) {
   if (!REDIS_ENABLED) return null;
 
-  // 首次调用时打印一次启用日志
+  // 冷却期内直接跳过
+  if (isRedisInCooldown()) {
+    return null;
+  }
+
   logRedisStatus();
+
+  const startTime = Date.now();
 
   try {
     const controller = new AbortController();
@@ -89,13 +137,22 @@ async function redisCommand(...args) {
     });
     clearTimeout(timer);
 
-    if (!res.ok) return null;
+    const elapsed = Date.now() - startTime;
+
+    if (!res.ok) {
+      recordRedisSlow(elapsed, 'HTTP 错误');
+      return null;
+    }
 
     const data = await res.json();
+
+    // 判断性能
+    recordRedisOk(elapsed);
+
     return data.result;
   } catch (err) {
-    // 静默失败：网络抖动、超时、上游异常等
-    // 不打印日志，避免污染输出
+    const elapsed = Date.now() - startTime;
+    recordRedisSlow(elapsed, '失败');
     return null;
   }
 }
@@ -104,12 +161,6 @@ async function redisCommand(...args) {
 // 对外接口
 // ==========================================
 
-/**
- * 获取缓存
- * 
- * @param {string} key - 缓存键
- * @returns {Promise<any|null>}
- */
 export async function getCache(key) {
   // ===== L1: 内存 =====
   const mem = memCache.get(key);
@@ -119,14 +170,14 @@ export async function getCache(key) {
   if (mem) memCache.delete(key);
 
   // ===== L2: Redis =====
-  if (REDIS_ENABLED) {
+  if (REDIS_ENABLED && !isRedisInCooldown()) {
     const raw = await redisCommand('GET', key);
     if (raw !== null && raw !== undefined) {
       try {
         const data = JSON.parse(raw);
         console.log(`[Cache] ✅ L2 HIT: ${key}`);
 
-        // 写回 L1（加速后续命中）
+        // 写回 L1
         memCache.set(key, {
           data,
           expireAt: Date.now() + L1_TTL * 1000,
@@ -142,13 +193,6 @@ export async function getCache(key) {
   return null;
 }
 
-/**
- * 写入缓存
- * 
- * @param {string} key - 缓存键
- * @param {any} data - 数据
- * @param {number} ttlSeconds - TTL（秒）
- */
 export async function setCache(key, data, ttlSeconds = 3600) {
   // ===== L1: 内存 =====
   memCache.set(key, {
@@ -162,39 +206,34 @@ export async function setCache(key, data, ttlSeconds = 3600) {
   }
 
   // ===== L2: Redis =====
-  if (REDIS_ENABLED) {
+  if (REDIS_ENABLED && !isRedisInCooldown()) {
     await redisCommand('SET', key, JSON.stringify(data), 'EX', ttlSeconds);
     console.log(`[Cache] ✅ L2 WRITE: ${key} (ttl=${ttlSeconds}s)`);
   }
 }
 
-/**
- * 删除缓存
- */
 export async function deleteCache(key) {
   memCache.delete(key);
-  if (REDIS_ENABLED) {
+  if (REDIS_ENABLED && !isRedisInCooldown()) {
     await redisCommand('DEL', key);
   }
 }
 
-/**
- * 清空所有缓存（仅当前实例 L1）
- */
 export function clearCache() {
   const size = memCache.size;
   memCache.clear();
-  console.log(`[Cache] 🧹 清空 L1 的 ${size} 个条目（L2 需手动在 Upstash 清空）`);
+  console.log(`[Cache] 🧹 清空 L1 的 ${size} 个条目`);
 }
 
-/**
- * 缓存状态（调试用）
- */
 export function getCacheStats() {
   return {
     l1Size: memCache.size,
     l1Keys: [...memCache.keys()].slice(0, 20),
     l2Enabled: REDIS_ENABLED,
     l2Url: UPSTASH_URL ? UPSTASH_URL.replace(/https:\/\/([^.]+).*/, 'https://$1***') : null,
+    redisInCooldown: isRedisInCooldown(),
+    redisCooldownRemain: isRedisInCooldown()
+      ? Math.round((redisCooldownUntil - Date.now()) / 1000)
+      : 0,
   };
 }

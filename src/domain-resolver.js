@@ -90,6 +90,28 @@ export async function markDomainFailed(failedDomain, logger = null) {
  * @returns {Promise<string>}
  */
 export async function probeAndUpdate(logger = null) {
+  // ===== 0. Redis 锁：防止并发探测 =====
+  const lockKey = 'domain:probe:lock';
+  const lockAcquired = await getCache(lockKey);
+  if (lockAcquired) {
+    console.log(`[Domain] ⏳ 其他实例正在探测，等待...`);
+    // 等待最多 5 秒
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      const cached = await getCache(REDIS_KEY);
+      if (cached && cached.domain) {
+        currentDomain = cached.domain;
+        lastProbeAt = cached.ts || Date.now();
+        return currentDomain;
+      }
+    }
+    console.log(`[Domain] ⚠️ 等待超时，继续用当前域名`);
+    return currentDomain;
+  }
+
+  // 获取锁（60 秒自动释放）
+  await setCache(lockKey, { ts: Date.now() }, 60);
+
   // ===== 1. 先检查 Redis（跨实例共享）=====
   try {
     const redisCached = await getCache(REDIS_KEY);
@@ -182,7 +204,7 @@ async function saveToRedis(domain) {
 async function probeDomain(domain, logger) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
+    const timer = setTimeout(() => controller.abort(), 8000);
 
     const resp = await fetch(`https://${domain}/`, {
       method: 'HEAD',
