@@ -4,7 +4,7 @@
  */
 export const CONFIG = {
   // 站点域名
-  BASE_DOMAIN: 'x8kb9k8.com',
+  BASE_DOMAIN: '0996zp.com',
 
   // 域名发现源
   DISCOVERY_URL: 'https://jpyy.com',
@@ -24,8 +24,8 @@ export const CONFIG = {
   USER_AGENT: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
 
   // 请求配置
-  REQUEST_TIMEOUT: 15000,
-  RETRY_COUNT: 2,
+  REQUEST_TIMEOUT: 5000,
+  RETRY_COUNT: 1,
   RETRY_DELAY: 300,
 
   // 域名缓存
