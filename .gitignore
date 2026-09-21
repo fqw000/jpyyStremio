@@ -22,3 +22,6 @@ npm-debug.log*
 .idea/
 .vercel
 .env*
+
+# 本地备份
+*.bak
