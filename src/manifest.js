@@ -17,7 +17,7 @@ export const MANIFEST = {
   catalogs: [
     {
       type: 'movie',
-      id: 'jinpai-movie',
+      id: 'movie',
       name: '自用接口 - 电影',
       extra: [
         { name: 'search', isRequired: false },  // 搜索支持
@@ -26,7 +26,7 @@ export const MANIFEST = {
     },
     {
       type: 'series',
-      id: 'jinpai-series',
+      id: 'series',
       name: '自用接口 - 电视剧',
       extra: [
         { name: 'search', isRequired: false },  // 搜索支持
@@ -35,7 +35,7 @@ export const MANIFEST = {
     },
     {
       type: 'series', 
-      id: 'jinpai-variety', 
+      id: 'variety', 
       name: '自用接口 - 综艺',
       extra: [
         { name: 'search', isRequired: false },  // 搜索支持
@@ -44,7 +44,7 @@ export const MANIFEST = {
     },
     {
       type: 'series', 
-      id: 'jinpai-anime', 
+      id: 'anime', 
       name: '自用接口 - 动漫',
       extra: [
         { name: 'search', isRequired: false },  // 搜索支持
@@ -53,7 +53,7 @@ export const MANIFEST = {
     },
     {
       type: 'series', 
-      id: 'jinpai-short', 
+      id: 'short', 
       name: '自用接口 - 短剧',
       extra: [
         { name: 'search', isRequired: false },  // 搜索支持

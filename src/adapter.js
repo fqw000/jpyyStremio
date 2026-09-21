@@ -18,11 +18,19 @@ import { getCache, setCache } from './cache.js';
 // ==========================================
 
 export const CATALOG_TYPE_MAP = {
+  // ===== 完整 ID（manifest 声明）=====
   'jinpai-movie': { typeId: 1, itemType: 'movie' },
   'jinpai-series': { typeId: 2, itemType: 'series' },
   'jinpai-variety': { typeId: 3, itemType: 'series' },
   'jinpai-anime': { typeId: 4, itemType: 'series' },
   'jinpai-short': { typeId: 88, itemType: 'series' },
+
+  // ===== 简写别名（兼容 Stremio 客户端特殊请求）=====
+  'movie': { typeId: 1, itemType: 'movie' },
+  'series': { typeId: 2, itemType: 'series' },
+  'variety': { typeId: 3, itemType: 'series' },
+  'anime': { typeId: 4, itemType: 'series' },
+  'short': { typeId: 88, itemType: 'series' },
 };
 
 // ==========================================
@@ -82,7 +90,10 @@ export async function fetchCatalog(catalogId, skip = 0) {
   console.log(`[Adapter] 📂 fetchCatalog: catalogId=${catalogId}, skip=${skip}`);
 
   const config = CATALOG_TYPE_MAP[catalogId];
-  if (!config) return [];
+  if (!config) {
+    console.warn(`[Adapter] ⚠️ 未知 catalogId: ${catalogId}`);
+    return [];
+  }
 
   const { typeId } = config;
   const pageSize = 48;
@@ -96,7 +107,7 @@ export async function fetchCatalog(catalogId, skip = 0) {
     text = await getText(url, { 'RSC': '1', 'Referer': `https://${domain}/` });
   } catch (err) {
     if (err.message.includes('403') || err.name === 'AbortError') {
-      console.log(`[Adapter] ⚠️ 域名失败，尝试切换...`);
+      console.log(`[Adapter] ⚠️ 域名失败 (${domain})，尝试切换...`);
       const newDomain = await markDomainFailed(domain);
       if (newDomain && newDomain !== domain) {
         const newUrl = `https://${newDomain}/vod/show/id/${typeId}/page/${page}`;
@@ -110,7 +121,10 @@ export async function fetchCatalog(catalogId, skip = 0) {
   }
 
   const list = parseCatalog(text);
-  if (!Array.isArray(list)) return [];
+  if (!Array.isArray(list)) {
+    console.warn(`[Adapter] ⚠️ parseCatalog 返回非数组`);
+    return [];
+  }
 
   const result = list.map(item => ({
     vodId: String(item.vodId || ''),
@@ -129,15 +143,6 @@ export async function fetchCatalog(catalogId, skip = 0) {
 // Detail（缓存 30 分钟）
 // ==========================================
 
-/**
- * 获取影片详情
- * 
- * 缓存 Key: detail:{vodId}
- * TTL: 30 分钟
- * 
- * @param {string} vodId
- * @returns {Promise<Object|null>}
- */
 export async function fetchDetail(vodId) {
   const cacheKey = `detail:${vodId}`;
   const cached = await getCache(cacheKey);
@@ -186,19 +191,21 @@ export async function fetchDetail(vodId) {
 }
 
 // ==========================================
-// Episodes（独立缓存，Stream 流程用）
+// Episodes（独立缓存，Stream 流程专用）
 // ==========================================
 
 /**
- * 获取剧集列表
+ * 获取剧集列表（独立缓存，直连站点）
  * 
- * 与 fetchDetail 分离的原因：
- * - Stream 流程只需要 episodes（体积小，约 1-2KB）
- * - fetchDetail 返回完整详情（含简介、演员等，5-10KB）
- * - 独立缓存减少 Redis 读流量
+ * 优化说明：
+ * - 不再级联调用 fetchDetail
+ * - 直接请求站点详情页，只提取 episodes
+ * - 独立缓存 30 分钟
  * 
- * 缓存 Key: episodes:{vodId}
- * TTL: 30 分钟
+ * 优势：
+ * - Stream 流程不再依赖 detail 缓存
+ * - Redis 读取体积更小（episodes 约 1KB，detail 约 10KB）
+ * - 缓存 miss 时只回源一次，不影响 detail
  * 
  * @param {string} vodId
  * @returns {Promise<Array<{nid: string, name: string}>>}
@@ -206,19 +213,36 @@ export async function fetchDetail(vodId) {
 export async function fetchEpisodes(vodId) {
   const cacheKey = `episodes:${vodId}`;
 
-  // ===== 先查独立缓存 =====
+  // ===== 1. 检查独立 episodes 缓存 =====
   const cached = await getCache(cacheKey);
   if (cached) {
     console.log(`[Adapter] ✅ Episodes 缓存命中: ${vodId} (${cached.length} 集)`);
     return cached;
   }
 
-  // ===== 缓存未命中，从 fetchDetail 拿（可能命中 detail 缓存）=====
-  console.log(`[Adapter] 📺 fetchEpisodes: vodId=${vodId}`);
-  const detail = await fetchDetail(vodId);
-  const episodes = detail?.episodes || [];
+  // ===== 2. 检查 detail 缓存（Meta 可能已经缓存过）=====
+  const detailCached = await getCache(`detail:${vodId}`);
+  if (detailCached && Array.isArray(detailCached.episodes)) {
+    console.log(`[Adapter] ✅ 从 Detail 缓存提取 Episodes: ${vodId}`);
+    await setCache(cacheKey, detailCached.episodes, 1800);
+    return detailCached.episodes;
+  }
 
-  // ===== 写入独立缓存（30 分钟）=====
+  // ===== 3. 都未命中，直连站点 =====
+  console.log(`[Adapter] 📺 fetchEpisodes: vodId=${vodId}`);
+
+  const domain = getBaseDomain();
+  const url = `https://${domain}/detail/${vodId}?_rsc=xsbs6`;
+
+  const text = await getText(url, { 'RSC': '1', 'Referer': `https://${domain}/` });
+  const detail = parseDetail(text);
+  if (!detail) {
+    console.warn(`[Adapter] ⚠️ parseDetail 返回 null`);
+    return [];
+  }
+
+  const episodes = extractEpisodes(detail);
+
   if (episodes.length > 0) {
     await setCache(cacheKey, episodes, 1800);
     console.log(`[Adapter] ✅ Episodes 缓存写入: ${vodId} (${episodes.length} 集)`);
@@ -283,9 +307,21 @@ export async function searchVideos(keyword, page = 1, pageSize = 24) {
 }
 
 // ==========================================
-// Stream（缓存 10 分钟）
+// Stream（缓存 3 分钟）
 // ==========================================
 
+/**
+ * 获取流媒体播放地址
+ * 
+ * 缓存策略：
+ * - TTL：**180 秒（3 分钟）**（保守，因为 URL 有时效）
+ * - 原因：Stream URL 含 auth_key 或 sign，通常 1-4 小时内有效
+ * - 3 分钟确保用户点击播放时 URL 仍然有效
+ * 
+ * @param {string|number} vodId
+ * @param {string|number} nid
+ * @returns {Promise<Array<{url: string, quality: string, resolution: number}>>}
+ */
 export async function fetchStream(vodId, nid) {
   const cacheKey = `stream:${vodId}:${nid}`;
   const cached = await getCache(cacheKey);
@@ -320,7 +356,8 @@ export async function fetchStream(vodId, nid) {
     .sort((a, b) => b.resolution - a.resolution);
 
   if (result.length > 0) {
-    await setCache(cacheKey, result, 600);
+    // ===== TTL 180 秒（3 分钟）=====
+    await setCache(cacheKey, result, 180);
   }
 
   return result;

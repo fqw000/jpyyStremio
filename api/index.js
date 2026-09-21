@@ -1,30 +1,49 @@
 /**
  * Vercel Edge Function 入口
  * 
- * 与 Cloudflare Workers 的差异：
- * - 使用 `export const config = { runtime: 'edge' }` 声明 Edge Runtime
- * - 使用 `export default async function handler(request)` 代替 `export default { fetch }`
- * - 环境变量从 `process.env` 读取（而不是 env 参数）
+ * 职责：
+ * - 为所有日志自动添加时间戳
+ * - 转交请求给 src/handler.js 处理
  * 
  * @module api/index
  */
 
-// 导入主处理逻辑
-import handler from '../src/handler.js';
+// ==========================================
+// 全局日志时间戳补丁（只执行一次）
+// ==========================================
 
-// 声明使用 Edge Runtime（V8 isolate，和 Cloudflare Workers 一致）
+if (!globalThis.__logPatched) {
+  globalThis.__logPatched = true;
+
+  const _log = console.log.bind(console);
+  const _warn = console.warn.bind(console);
+  const _error = console.error.bind(console);
+
+  const ts = () => {
+    const d = new Date();
+    // 时:分:秒.毫秒
+    return `[${d.toTimeString().slice(0, 8)}.${String(d.getMilliseconds()).padStart(3, '0')}]`;
+  };
+
+  console.log = (...args) => _log(ts(), ...args);
+  console.warn = (...args) => _warn(ts(), ...args);
+  console.error = (...args) => _error(ts(), ...args);
+}
+
+// ==========================================
+// Vercel Edge Runtime 配置
+// ==========================================
+
 export const config = {
   runtime: 'edge',
 };
 
-/**
- * Vercel Edge Function 主入口
- * 
- * @param {Request} request - 标准 Web Request 对象
- * @returns {Promise<Response>} 标准 Web Response 对象
- */
+// ==========================================
+// 主入口
+// ==========================================
+
+import handler from '../src/handler.js';
+
 export default async function vercelHandler(request) {
-  // Vercel Edge Runtime 与 Cloudflare Workers 的 fetch 签名一致
-  // 直接复用原有 handler
   return await handler.fetch(request, process.env, null);
 }

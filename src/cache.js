@@ -5,11 +5,10 @@
  * - L1: 内存缓存（最快，实例级，命中率低）
  * - L2: Upstash Redis（跨实例，< 10ms）
  * 
- * 读取流程：
- * getCache() → L1 命中返回 → L2 命中写回 L1 返回 → 都未命中返回 null
- * 
- * 写入流程：
- * setCache() → 写 L1 → 写 L2（异步，不阻塞）
+ * 容错设计：
+ * - Redis 请求超时 3 秒
+ * - Redis 失败时静默降级到内存缓存
+ * - 不打印重复日志（避免日志污染）
  * 
  * @module cache
  */
@@ -22,6 +21,9 @@ const MAX_MEM_SIZE = 200;
 
 /** L1 缓存时长（秒），比 L2 短 */
 const L1_TTL = 60;
+
+/** Redis 请求超时（毫秒） */
+const REDIS_TIMEOUT = 1500;
 
 // ==========================================
 // Upstash 配置（从环境变量读取）
@@ -37,30 +39,45 @@ const UPSTASH_TOKEN = typeof process !== 'undefined'
 
 const REDIS_ENABLED = !!(UPSTASH_URL && UPSTASH_TOKEN);
 
-if (REDIS_ENABLED) {
-  console.log(`[Cache] ✅ Upstash Redis 已启用`);
-} else {
-  console.warn(`[Cache] ⚠️ Upstash 未配置，仅使用内存缓存`);
+/** 日志只打印一次 */
+let redisLogPrinted = false;
+
+function logRedisStatus() {
+  if (redisLogPrinted) return;
+  redisLogPrinted = true;
+
+  if (REDIS_ENABLED) {
+    console.log(`[Cache] ✅ Upstash Redis 已启用`);
+  } else {
+    console.warn(`[Cache] ⚠️ Upstash 未配置，仅使用内存缓存`);
+  }
 }
 
 // ==========================================
-// Upstash REST API
+// Upstash REST API（带超时 + 静默降级）
 // ==========================================
 
 /**
  * 执行 Redis 命令
  * 
- * 使用 Upstash REST API 的批处理格式：
- * POST {URL}
- * Body: ["SET", "key", "value", "EX", 3600]
+ * 容错策略：
+ * - 3 秒超时
+ * - 失败时静默返回 null（不打印错误）
+ * - 只在首次使用时打印一次启用日志
  * 
  * @param {...string|number} args - Redis 命令参数
- * @returns {Promise<any>} 命令结果
+ * @returns {Promise<any>} 命令结果，失败返回 null
  */
 async function redisCommand(...args) {
   if (!REDIS_ENABLED) return null;
 
+  // 首次调用时打印一次启用日志
+  logRedisStatus();
+
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REDIS_TIMEOUT);
+
     const res = await fetch(UPSTASH_URL, {
       method: 'POST',
       headers: {
@@ -68,17 +85,17 @@ async function redisCommand(...args) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(args),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
 
-    if (!res.ok) {
-      console.warn(`[Cache] Redis 命令失败: HTTP ${res.status}`);
-      return null;
-    }
+    if (!res.ok) return null;
 
     const data = await res.json();
     return data.result;
   } catch (err) {
-    console.warn(`[Cache] Redis 命令异常: ${err.message}`);
+    // 静默失败：网络抖动、超时、上游异常等
+    // 不打印日志，避免污染输出
     return null;
   }
 }
@@ -97,7 +114,6 @@ export async function getCache(key) {
   // ===== L1: 内存 =====
   const mem = memCache.get(key);
   if (mem && Date.now() <= mem.expireAt) {
-    console.log(`[Cache] ✅ L1 HIT: ${key}`);
     return mem.data;
   }
   if (mem) memCache.delete(key);
@@ -118,12 +134,11 @@ export async function getCache(key) {
 
         return data;
       } catch (err) {
-        console.warn(`[Cache] JSON 解析失败: ${err.message}`);
+        // JSON 解析失败，忽略
       }
     }
   }
 
-  console.log(`[Cache] ❌ MISS: ${key}`);
   return null;
 }
 
@@ -148,12 +163,8 @@ export async function setCache(key, data, ttlSeconds = 3600) {
 
   // ===== L2: Redis =====
   if (REDIS_ENABLED) {
-    try {
-      await redisCommand('SET', key, JSON.stringify(data), 'EX', ttlSeconds);
-      console.log(`[Cache] ✅ L2 WRITE: ${key} (ttl=${ttlSeconds}s)`);
-    } catch (err) {
-      console.warn(`[Cache] L2 写入失败: ${err.message}`);
-    }
+    await redisCommand('SET', key, JSON.stringify(data), 'EX', ttlSeconds);
+    console.log(`[Cache] ✅ L2 WRITE: ${key} (ttl=${ttlSeconds}s)`);
   }
 }
 
@@ -177,7 +188,7 @@ export function clearCache() {
 }
 
 /**
- * 缓存状态
+ * 缓存状态（调试用）
  */
 export function getCacheStats() {
   return {

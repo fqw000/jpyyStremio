@@ -1,14 +1,15 @@
 /**
  * IMDb → 站点 vodId 解析器
  * 
- * 缓存改造：从内存 Map 改为 Redis
- * - imdb2vod:{imdbId}:{type}:{season} → 解析结果（TTL 7 天）
- * - meta:{imdbId}:{type} → TMDB/Cinemeta 元数据（TTL 7 天）
+ * 核心特性：
+ * - 多语言搜索：从 TMDB 获取所有别名，逐个尝试
+ * - 多别名匹配：用所有候选标题与搜索结果对比，取最高分
+ * - Redis 缓存：所有中间结果跨实例共享
  * 
  * @module imdb-resolver
  */
 import { CONFIG } from './config.js';
-import { fetchImdbMeta } from './tmdb.js';
+import { fetchImdbMeta, fetchAlternativeTitles } from './tmdb.js';
 import { searchVideos } from './adapter.js';
 import { getCache, setCache } from './cache.js';
 
@@ -19,6 +20,9 @@ import { getCache, setCache } from './cache.js';
 /** 缓存 TTL：7 天 */
 const CACHE_TTL = 7 * 24 * 60 * 60;
 
+/** 搜索别名的数量上限（避免过多请求） */
+const MAX_SEARCH_TITLES = 5;
+
 // ==========================================
 // 主入口
 // ==========================================
@@ -26,15 +30,15 @@ const CACHE_TTL = 7 * 24 * 60 * 60;
 /**
  * 将 IMDb ID 解析为站点 vodId
  * 
- * @param {string} imdbId - IMDb ID（如 tt0109830）
+ * @param {string} imdbId - IMDb ID
  * @param {string} type - 'movie' 或 'series'
  * @param {number} season - 季数
- * @returns {Promise<Object|null>} { vodId, title, year, imdbId, season, tmdbId }
+ * @returns {Promise<Object|null>}
  */
 export async function resolveImdbToVod(imdbId, type, season = 1) {
   console.log(`[IMDb→Vod] 🔍 Resolving: ${imdbId}, type=${type}, season=${season}`);
 
-  // ===== 1. 检查 Redis 缓存 =====
+  // ===== 1. Redis 缓存 =====
   const cacheKey = `imdb2vod:${imdbId}:${type}:${season}`;
   const cached = await getCache(cacheKey);
   if (cached) {
@@ -51,31 +55,42 @@ export async function resolveImdbToVod(imdbId, type, season = 1) {
 
   console.log(`[IMDb→Vod] 📝 Meta: title="${meta.title}", year=${meta.year}`);
 
-  // ===== 3. 搜索站点 =====
-  const searchResults = await searchVideos(meta.title);
-  if (searchResults.length === 0) {
-    console.error(`[IMDb→Vod] ❌ No search results for "${meta.title}"`);
+  // ===== 3. 收集所有候选标题 =====
+  const candidateTitles = await collectCandidateTitles(meta, type);
+  if (candidateTitles.length === 0) {
+    console.error(`[IMDb→Vod] ❌ No candidate titles`);
     return null;
   }
 
-  console.log(`[IMDb→Vod] 📋 Search returned ${searchResults.length} candidates`);
+  // ===== 4. 多标题搜索 =====
+  const { results, searchedTitles } = await searchWithMultipleTitles(
+    candidateTitles,
+    type
+  );
 
-  // ===== 4. 匹配 =====
+  if (results.length === 0) {
+    console.error(`[IMDb→Vod] ❌ No search results`);
+    return null;
+  }
+
+  console.log(`[IMDb→Vod] 📋 Total candidates: ${results.length}，搜索过: ${searchedTitles.length} 个标题`);
+
+  // ===== 5. 匹配（用所有候选标题）=====
   let matched = null;
 
-  // 剧集：尝试按 season 匹配
+  // 剧集：先尝试按 season 匹配
   if (type === 'series' && meta.seasonCount > 0) {
-    matched = findSeasonMatch(searchResults, season, meta.title);
+    matched = findSeasonMatch(results, season, candidateTitles);
     if (matched) {
-      console.log(`[IMDb→Vod] 🎯 Season ${season} match: "${matched.vodName}" (vodId=${matched.vodId})`);
+      console.log(`[IMDb→Vod] 🎯 Season ${season} match: "${matched.vodName}"`);
     }
   }
 
   // 兜底：普通匹配
   if (!matched) {
-    matched = findBestMatch(searchResults, meta.title, meta.year);
+    matched = findBestMatch(results, candidateTitles, meta.year);
     if (matched) {
-      console.log(`[IMDb→Vod] 🎯 Best match: "${matched.vodName}" (vodId=${matched.vodId})`);
+      console.log(`[IMDb→Vod] 🎯 Best match: "${matched.vodName}"`);
     }
   }
 
@@ -84,7 +99,7 @@ export async function resolveImdbToVod(imdbId, type, season = 1) {
     return null;
   }
 
-  // ===== 5. 写入 Redis 缓存 =====
+  // ===== 6. 写入缓存 =====
   const result = {
     vodId: matched.vodId,
     title: matched.vodName,
@@ -100,35 +115,169 @@ export async function resolveImdbToVod(imdbId, type, season = 1) {
 }
 
 // ==========================================
+// 候选标题收集
+// ==========================================
+
+/**
+ * 收集所有候选标题
+ * 
+ * 优先级：
+ * 1. 纯中文标题（最可能与站点匹配）
+ * 2. 中文混合标题（如 "3体"）
+ * 3. 原始标题（TMDB 返回的名字）
+ * 4. 英文别名
+ * 5. 其他语言别名
+ * 
+ * @param {Object} meta - TMDB/Cinemeta 元数据
+ * @param {string} type - 'movie' 或 'series'
+ * @returns {Promise<string[]>} 排序后的候选标题
+ */
+async function collectCandidateTitles(meta, type) {
+  const candidates = new Set();
+
+  // 原始标题
+  if (meta.title) candidates.add(meta.title.trim());
+  if (meta.originalTitle && meta.originalTitle !== meta.title) {
+    candidates.add(meta.originalTitle.trim());
+  }
+
+  // TMDB 别名
+  if (meta.tmdbId) {
+    try {
+      const altTitles = await fetchAlternativeTitles(meta.tmdbId, type);
+      for (const alt of altTitles) {
+        if (alt && alt.trim()) candidates.add(alt.trim());
+      }
+    } catch (err) {
+      console.warn(`[Candidates] 获取别名失败: ${err.message}`);
+    }
+  }
+
+  // ===== 排序：按优先级 =====
+  const sorted = [...candidates].sort((a, b) => {
+    return getTitlePriority(b) - getTitlePriority(a);
+  });
+
+  // ===== 限制数量 =====
+  const limited = sorted.slice(0, MAX_SEARCH_TITLES);
+
+  console.log(`[Candidates] 📋 ${limited.length} 个标题: ${limited.join(' | ')}`);
+
+  return limited;
+}
+
+/**
+ * 计算标题优先级
+ * 
+ * 优先级从高到低：
+ * 3 = 纯中文（最可能与站点匹配）
+ * 2 = 中文为主（含少量非中文字符）
+ * 1 = 原始标题（不做降级）
+ * 0 = 其他（英文、其他语言）
+ * 
+ * @param {string} title
+ * @returns {number}
+ */
+function getTitlePriority(title) {
+  if (!title) return -1;
+
+  const chineseCount = (title.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const totalLength = title.length;
+
+  // 纯中文
+  if (/^[\u4e00-\u9fa5]+$/.test(title)) return 3;
+
+  // 中文占比 > 50%
+  if (chineseCount / totalLength > 0.5) return 2;
+
+  return 0;
+}
+
+// ==========================================
+// 多标题搜索
+// ==========================================
+
+/**
+ * 用多个候选标题搜索站点
+ * 
+ * 策略：
+ * - 搜索所有候选标题（最多 MAX_SEARCH_TITLES 个）
+ * - 合并去重
+ * - 不提前终止（Redis 缓存让成本可控）
+ * 
+ * @param {string[]} candidateTitles - 候选标题数组
+ * @param {string} type - 'movie' 或 'series'
+ * @returns {Promise<{results: Array, searchedTitles: string[]}>}
+ */
+async function searchWithMultipleTitles(candidateTitles, type) {
+  const allResults = [];
+  const seenIds = new Set();
+  const searchedTitles = [];
+
+  for (const keyword of candidateTitles) {
+    if (!keyword || keyword.length < 2) continue;
+
+    try {
+      const results = await searchVideos(keyword);
+      searchedTitles.push(keyword);
+
+      if (Array.isArray(results) && results.length > 0) {
+        for (const r of results) {
+          if (r.vodId && !seenIds.has(r.vodId)) {
+            seenIds.add(r.vodId);
+            allResults.push(r);
+          }
+        }
+
+        console.log(`[MultiSearch]   "${keyword}" → ${results.length} 条`);
+      } else {
+        console.log(`[MultiSearch]   "${keyword}" → 0 条`);
+      }
+    } catch (err) {
+      console.warn(`[MultiSearch]   "${keyword}" 搜索失败: ${err.message}`);
+    }
+  }
+
+  return { results: allResults, searchedTitles };
+}
+
+// ==========================================
 // 匹配逻辑
 // ==========================================
 
 /**
  * 查找指定 Season 对应的 vod
+ * 
+ * @param {Array} results - 搜索结果
+ * @param {number} targetSeason - 目标季数
+ * @param {string[]} candidateTitles - 候选标题数组
+ * @returns {Object|null}
  */
-function findSeasonMatch(results, targetSeason, baseTitle) {
-  console.log(`[SeasonMatch] 🎬 Finding season ${targetSeason} in "${baseTitle}"`);
+function findSeasonMatch(results, targetSeason, candidateTitles) {
+  console.log(`[SeasonMatch] 🎬 Finding season ${targetSeason}`);
 
   const candidates = [];
 
   for (const r of results) {
     const seasonNum = extractSeasonNumber(r.vodName);
     if (seasonNum !== null) {
-      const sim = similarity(baseTitle, r.vodName);
-      if (sim > 0.3) {
-        candidates.push({ ...r, season: seasonNum, similarity: sim });
-        console.log(`[SeasonMatch]   - "${r.vodName}" → season=${seasonNum}, sim=${sim.toFixed(2)}`);
+      // 计算与所有候选标题的最高相似度
+      const maxSim = Math.max(
+        ...candidateTitles.map(t => similarity(t, r.vodName))
+      );
+
+      if (maxSim > 0.3) {
+        candidates.push({ ...r, season: seasonNum, similarity: maxSim });
+        console.log(`[SeasonMatch]   - "${r.vodName}" → season=${seasonNum}, sim=${maxSim.toFixed(2)}`);
       }
     }
   }
 
   if (candidates.length === 0) return null;
 
-  // 精确匹配目标 season
   const exact = candidates.find(c => c.season === targetSeason);
   if (exact) return exact;
 
-  // 兜底：相似度最高的
   candidates.sort((a, b) => b.similarity - a.similarity);
   console.log(`[SeasonMatch] ⚠️ No exact season match, using best`);
   return candidates[0];
@@ -140,20 +289,16 @@ function findSeasonMatch(results, targetSeason, baseTitle) {
 function extractSeasonNumber(title) {
   if (!title) return null;
 
-  // 模式1：中文数字 "第X季"
   const cnMap = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
   const cnMatch = title.match(/第([一二三四五六七八九十])季/);
   if (cnMatch) return cnMap[cnMatch[1]] || null;
 
-  // 模式2：阿拉伯数字 "第X季"
   const numMatch = title.match(/第\s*(\d+)\s*季/);
   if (numMatch) return parseInt(numMatch[1], 10);
 
-  // 模式3：英文 "Season X"
   const enMatch = title.match(/season\s*(\d+)/i);
   if (enMatch) return parseInt(enMatch[1], 10);
 
-  // 模式4：缩写 "SX"
   const sMatch = title.match(/\bS(\d+)\b/);
   if (sMatch) {
     const num = parseInt(sMatch[1], 10);
@@ -164,17 +309,35 @@ function extractSeasonNumber(title) {
 }
 
 /**
- * 普通匹配：基于标题相似度和年份
+ * 普通匹配：基于所有候选标题和年份
+ * 
+ * 关键：对每个结果，计算它与所有候选标题的相似度，取最大值。
+ * 这样即使主标题不匹配，只要某个别名匹配，也能成功。
+ * 
+ * @param {Array} results - 搜索结果
+ * @param {string[]} candidateTitles - 候选标题数组
+ * @param {number|null} targetYear - 目标年份
+ * @returns {Object|null}
  */
-function findBestMatch(results, targetTitle, targetYear) {
-  console.log(`[BestMatch] 🎯 Matching "${targetTitle}" (${targetYear})`);
+function findBestMatch(results, candidateTitles, targetYear) {
+  console.log(`[BestMatch] 🎯 Matching against ${candidateTitles.length} titles`);
 
   let best = null;
   let bestScore = 0;
 
   for (const r of results) {
-    const titleSim = similarity(targetTitle, r.vodName);
+    // ===== 关键：取与所有候选标题的最高相似度 =====
+    let maxSim = 0;
+    let matchedTitle = '';
+    for (const t of candidateTitles) {
+      const sim = similarity(t, r.vodName);
+      if (sim > maxSim) {
+        maxSim = sim;
+        matchedTitle = t;
+      }
+    }
 
+    // 年份加分
     let yearBonus = 0;
     if (targetYear && r.vodYear) {
       const diff = Math.abs(targetYear - r.vodYear);
@@ -183,15 +346,23 @@ function findBestMatch(results, targetTitle, targetYear) {
       else if (diff > 3) yearBonus = -0.3;
     }
 
+    // 精确匹配加分
     let exactBonus = 0;
-    if (r.vodName === targetTitle) exactBonus = 0.5;
-    else if (r.vodName.includes(targetTitle) || targetTitle.includes(r.vodName)) {
-      exactBonus = 0.2;
+    for (const t of candidateTitles) {
+      if (r.vodName === t) {
+        exactBonus = 0.5;
+        break;
+      }
+      if (r.vodName.includes(t) || t.includes(r.vodName)) {
+        exactBonus = Math.max(exactBonus, 0.2);
+      }
     }
 
-    const score = titleSim + yearBonus + exactBonus;
+    const score = maxSim + yearBonus + exactBonus;
 
-    console.log(`[BestMatch]   - "${r.vodName}" (${r.vodYear || '?'}) score=${score.toFixed(2)}`);
+    if (score > 0.3) {
+      console.log(`[BestMatch]   - "${r.vodName}" (${r.vodYear || '?'}) matched="${matchedTitle}" sim=${maxSim.toFixed(2)}, score=${score.toFixed(2)}`);
+    }
 
     if (score > bestScore) {
       bestScore = score;
@@ -209,7 +380,7 @@ function findBestMatch(results, targetTitle, targetYear) {
 }
 
 /**
- * 计算字符串相似度（Levenshtein 距离归一化）
+ * 计算字符串相似度
  */
 function similarity(s1, s2) {
   if (!s1 || !s2) return 0;
@@ -245,16 +416,9 @@ function similarity(s1, s2) {
 }
 
 // ==========================================
-// 元数据缓存（Redis）
+// 元数据缓存
 // ==========================================
 
-/**
- * 获取 IMDb 元数据（带 Redis 缓存）
- * 
- * @param {string} imdbId - IMDb ID
- * @param {string} type - 'movie' 或 'series'
- * @returns {Promise<Object|null>}
- */
 async function getCachedMeta(imdbId, type) {
   const cacheKey = `meta:${imdbId}:${type}`;
 
