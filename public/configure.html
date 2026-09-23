@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JPYY· Stremio Addon 配置</title>
+  <link rel="stylesheet" href="/configure.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+</head>
+<body>
+  <div class="container">
+
+    <!-- 头部 -->
+    <header>
+      <!-- <div class="logo">🎬</div> -->
+       <div class="logo"><img src="https://obs.3688baihuo.com/upload/site_ico/20260531-1/92da5ddc802c076de628be1b70e6fb90_180x180.png" alt="JPYY"></div>
+      <h1>JPYY</h1>
+      <p class="subtitle">Stremio Addon · 配置向导</p>
+    </header>
+
+    <!-- 基本信息 -->
+    <section class="card">
+      <h2><span class="icon">📦</span> 基本信息</h2>
+      <div class="info-grid">
+        <div class="info-item">
+          <span class="label">名称</span>
+          <span class="value">JPYY</span>
+        </div>
+        <div class="info-item">
+          <span class="label">版本</span>
+          <span class="value">1.0.0</span>
+        </div>
+        <div class="info-item">
+          <span class="label">资源</span>
+          <span class="value">目录 · 元数据 · 流媒体</span>
+        </div>
+        <div class="info-item">
+          <span class="label">支持</span>
+          <span class="value">电影 · 电视剧 · 综艺 · 动漫 · 短剧</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 配置项 -->
+    <section class="card">
+      <h2><span class="icon">⚙️</span> 高级配置</h2>
+      <p class="hint">全部为可选项，不填则使用默认值</p>
+
+      <!-- 资源站域名 -->
+      <div class="form-group">
+        <label for="baseDomain">
+          资源站域名
+          <span class="optional">可选</span>
+        </label>
+        <input
+          type="text"
+          id="baseDomain"
+          placeholder="0996zp.com"
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <span class="form-hint">
+          站点域名变更时可修改，留空使用默认 <code>0996zp.com</code>
+        </span>
+      </div>
+
+      <!-- TMDB API Key -->
+      <div class="form-group">
+        <label for="tmdbApiKey">
+          TMDB API Key
+          <span class="optional">可选</span>
+        </label>
+        <div class="input-with-toggle">
+          <input
+            type="password"
+            id="tmdbApiKey"
+            placeholder="留空使用内置 Key"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button type="button" id="toggleTmdbKey" class="toggle-btn" title="显示/隐藏">
+            👁
+          </button>
+        </div>
+        <span class="form-hint">
+          用于 IMDb 解析，留空使用内置 Key。填自己的可避免公共 Key 限流
+        </span>
+      </div>
+
+      <!-- 支持类型 -->
+      <div class="form-group">
+        <label>
+          支持的类型
+          <span class="optional">可选</span>
+        </label>
+        <div class="checkbox-grid">
+          <label class="checkbox-item">
+            <input type="checkbox" class="category-cb" value="movie" checked />
+            <span>🎬 电影</span>
+          </label>
+          <label class="checkbox-item">
+            <input type="checkbox" class="category-cb" value="series" checked />
+            <span>📺 电视剧</span>
+          </label>
+          <label class="checkbox-item">
+            <input type="checkbox" class="category-cb" value="variety" checked />
+            <span>🎤 综艺</span>
+          </label>
+          <label class="checkbox-item">
+            <input type="checkbox" class="category-cb" value="anime" checked />
+            <span>🎨 动漫</span>
+          </label>
+          <label class="checkbox-item">
+            <input type="checkbox" class="category-cb" value="short" checked />
+            <span>📱 短剧</span>
+          </label>
+        </div>
+        <span class="form-hint">
+          只显示勾选的类型，取消勾选可减少 Board 目录数量
+        </span>
+      </div>
+
+      <!-- IMDb 解析开关 -->
+      <div class="form-group checkbox-group">
+        <label>
+          <input type="checkbox" id="enableImdb" checked />
+          <span class="checkbox-text">
+            <strong>启用 IMDb 解析</strong>
+            <small>支持通过 tt 格式的 ID 播放（与其他 Addon 互通）</small>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <!-- 生成按钮 -->
+    <section class="card">
+      <button id="generateBtn" class="btn btn-primary btn-large">
+        <span class="icon">🚀</span>
+        生成安装链接
+      </button>
+      <button id="resetBtn" class="btn btn-secondary btn-large">
+        <span class="icon">🔄</span>
+        重置为默认
+      </button>
+    </section>
+
+    <!-- 生成结果 -->
+    <section class="card result-card" id="resultCard">
+      <h2><span class="icon">🔗</span> 安装链接</h2>
+
+      <div class="url-box">
+        <input type="text" id="manifestUrl" readonly />
+        <button id="copyBtn" class="copy-btn" title="复制链接">📋</button>
+      </div>
+
+      <div class="actions">
+        <a id="installBtn" class="btn btn-primary" href="#">
+          <span class="icon">📲</span>
+          安装到 Stremio
+        </a>
+        <button id="webInstallBtn" class="btn btn-secondary">
+          <span class="icon">🌐</span>
+          通过 Web 安装
+        </button>
+      </div>
+
+      <div class="qr-section">
+        <p class="hint">扫描二维码在手机 Stremio 中安装</p>
+        <div id="qrcode"></div>
+      </div>
+
+      <details class="config-preview">
+        <summary>
+          <span class="icon">▼</span>
+          查看配置内容
+        </summary>
+        <pre id="configPreview"></pre>
+      </details>
+    </section>
+
+    <!-- 底部 -->
+    <footer>
+      <p>MIT License · Made with ❤️ for Stremio Community</p>
+      <p class="version">v1.0.0</p>
+    </footer>
+
+  </div>
+
+  <!-- 二维码库 -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="/configure.js"></script>
+</body>
+</html>

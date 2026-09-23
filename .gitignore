@@ -25,3 +25,8 @@ npm-debug.log*
 
 # 本地备份
 *.bak
+
+# 其他临时文件
+源码未加密影视站.md
+domainFetcherJPYY.js
+domainSpeedTest.sh

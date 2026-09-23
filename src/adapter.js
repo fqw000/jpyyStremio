@@ -133,6 +133,10 @@ export async function fetchCatalog(catalogId, skip = 0) {
     vodYear: extractYear(item.vodPubdate),
     vodTotal: item.vodTotal || 0,
     vodSeries: (item.vodTotal || 0) > 0 ? 1 : 0,
+    vodClass: item.vodClass?.trim() || '',
+    vodActor: item.vodActor?.trim() || '',
+    vodBlurb: cleanHtml(item.vodContent || ''),
+    vodPubdate: item.vodPubdate || '',
   }));
 
   await setCache(cacheKey, result, 300);

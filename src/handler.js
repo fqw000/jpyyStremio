@@ -13,7 +13,9 @@
  * - Meta.videos[].id 是集级（jp146932:1:1）
  * - Stream 的 id 是集级（jp146932:1:1）
  */
-import { MANIFEST } from './manifest.js';
+// import { MANIFEST } from './manifest.js';
+import { generateManifest } from './manifest.js';
+import { CONFIG } from './config.js';
 import { fetchCatalog, fetchDetail, fetchEpisodes, searchVideos, fetchStream } from './adapter.js';
 import { resolveImdbToVod } from './imdb-resolver.js';
 import { searchTmdbByTitle, fetchSeasonThumbnails } from './tmdb.js';
@@ -81,6 +83,34 @@ export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
+  // ===== 解析用户配置（查询参数 cfg）=====
+  const cfgB64 = url.searchParams.get('cfg');
+  if (cfgB64) {
+    try {
+      // base64url 解码
+      const base64 = cfgB64.replace(/-/g, '+').replace(/_/g, '/');
+      const binary = atob(base64);
+      // UTF-8 解码
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const json = new TextDecoder('utf-8').decode(bytes);
+      const userConfig = JSON.parse(json);
+
+      // 注入全局
+      globalThis.__USER_CONFIG = userConfig;
+
+      console.log(`[Config] 📦 用户配置: ${JSON.stringify(userConfig)}`);
+    } catch (err) {
+      console.warn(`[Config] ⚠️ 配置解析失败: ${err.message}`);
+      globalThis.__USER_CONFIG = {};
+    }
+  } else {
+    // 无配置参数时清空
+    globalThis.__USER_CONFIG = {};
+  }
+
   console.log(`[Worker] 📨 ${request.method} ${pathname}${url.search}`);
 
   // ===== 1. Manifest =====
@@ -89,7 +119,14 @@ export async function handleRequest(request, env, ctx) {
       console.warn(`[Domain] 后台探测失败: ${err.message}`);
     });
 
-    return jsonResponse(MANIFEST, 0);
+    // ===== 动态生成 Manifest =====
+    const enabledCategories = CONFIG.ENABLED_CATEGORIES || ['movie', 'series', 'variety', 'anime', 'short'];
+    const manifest = generateManifest(enabledCategories);
+
+    console.log(`[Manifest] 📋 启用类型: ${enabledCategories.join(', ')}`);
+    console.log(`[Manifest] 📋 目录数: ${manifest.catalogs.length}`);
+
+    return jsonResponse(manifest, 0);
   }
 
   // ===== 2. Catalog（浏览 / 搜索 / 分页） =====
@@ -243,6 +280,9 @@ async function handleCatalog(catalogId, skip = 0) {
       name: item.vodName,
       poster: item.vodPic || '',
       year: item.vodYear ? String(item.vodYear) : '',
+      cast: item.vodActor ? item.vodActor.split(/[,，]/).map(a => a.trim()).filter(Boolean) : [],
+      genres: item.vodClass ? item.vodClass.split(/[,，]/).map(g => g.trim()).filter(Boolean) : [],
+      releaseInfo: item.vodPubdate ? (isSeries ? `${item.vodPubdate}-` : String(item.vodPubdate)) : '',
     };
   });
 
@@ -253,6 +293,7 @@ async function handleCatalog(catalogId, skip = 0) {
 // ==========================================
 // Meta 处理
 // ==========================================
+
 
 async function handleMeta(routeType, rawEncodedId) {
   const parsed = parseId(rawEncodedId);
@@ -286,18 +327,19 @@ async function handleMeta(routeType, rawEncodedId) {
     poster: detail.vodPic || '',
     background: detail.vodPicSlide || detail.vodPic || '',
     year: detail.vodYear ? String(detail.vodYear) : '',
-    director: detail.vodDirector || '',
+    director: detail.vodDirector ? detail.vodDirector.split(/[,，]/).map(d => d.trim()).filter(Boolean) : [],
     cast: detail.vodActor
-      ? detail.vodActor.split(/[,，]/).map(a => a.trim()).filter(Boolean)
+      ? detail.vodActor.split(/[,，]/).map(a => a.trim()).filter(Boolean).slice(0, 10)
       : [],
     genres: detail.vodClass
       ? detail.vodClass.split(/[,，]/).map(g => g.trim()).filter(Boolean)
       : [],
+
     releaseInfo: detail.vodYear ? String(detail.vodYear) : '',
   };
 
   if (detail.vodScore) {
-    meta.imdbRating = detail.vodScore;
+    meta.imdbRating = String(detail.vodScore);
   }
 
   // ===== 电影 =====
@@ -483,6 +525,23 @@ function jsonResponse(data, cacheSeconds = 0) {
   return new Response(JSON.stringify(data, null, 2), { headers });
 }
 
+//  ==========================================
+// Base64 URL 解码（兼容 Node.js 和浏览器）
+//  ==========================================
+function decodeBase64Url(str) {
+  const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  if (typeof atob === 'function') {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+  // Node.js
+  return Buffer.from(base64, 'base64').toString('utf-8');
+}
+
 // ==========================================
 // Cloudflare Workers 入口
 // ==========================================
@@ -492,3 +551,5 @@ export default {
     return await handleRequest(request, env, ctx);
   },
 };
+
+
