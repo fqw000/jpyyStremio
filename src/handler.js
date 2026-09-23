@@ -186,6 +186,13 @@ export async function handleRequest(request, env, ctx) {
       return jsonResponse({ message: 'Domain cache cleared', ...getDomainStatus() });
     }
 
+    // ===== 新增：测试 API =====
+    if (action === 'api') {
+      const { testDomainApi } = await import('./domain-resolver.js');
+      const result = await testDomainApi();
+      return jsonResponse(result);
+    }
+
     return jsonResponse(getDomainStatus());
   }
 
