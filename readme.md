@@ -284,6 +284,13 @@ const DEFAULTS = {
 
 ### 使用provider的要关注provider项目是否更新domain
 
+## 获取域名的方法
+[获取最新域名](https://fofa.info/result?qbase64=Ym9keT0ib2JzLjM2ODhiYWlodW8uY29tL3VwbG9hZC9zaXRlX2ljbyI%3D)
+
+实现方式是通过fofa 查找`body="obs.3688baihuo.com/upload/site_ico"` 。
+
+另外一是方式是发现了一个api,可以通过`domainFetcherJPYY.js`来获取，暂时未在项目里正式使用。
+
 ### 优先级说明
 
 ```
