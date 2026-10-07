@@ -20,6 +20,7 @@
     const DEFAULTS = {
         baseDomain: '0996zp.com',
         enableImdb: true,
+        enableStream: true,
     };
 
     const STREMIO_PROTOCOL = 'stremio://';
@@ -34,6 +35,7 @@
         baseDomain: $('baseDomain'),
         tmdbApiKey: $('tmdbApiKey'),
         enableImdb: $('enableImdb'),
+        enalbeStream: $('enableStream'),
         toggleTmdbKey: $('toggleTmdbKey'),
 
         generateBtn: $('generateBtn'),
@@ -123,6 +125,11 @@
         // IMDb 解析（默认 true，关闭时才写入）
         if (!el.enableImdb.checked) {
             config.imdb = false;
+        }
+
+        // Stream 解析（默认 true，关闭时才写入）
+        if (!el.enableStream.checked) {
+            config.stream = false;
         }
 
         return config;
@@ -253,6 +260,7 @@
         el.tmdbApiKey.value = '';
         el.tmdbApiKey.type = 'password';
         el.enableImdb.checked = DEFAULTS.enableImdb;
+        el.enableStream.checked = DEFAULTS.enableStream;
 
         // ===== 重置类型为全选 =====
         document.querySelectorAll('.category-cb').forEach(cb => {
@@ -315,7 +323,7 @@
     el.toggleTmdbKey.addEventListener('click', toggleTmdbKey);
 
     // 输入变化时自动更新（如果结果卡片已显示）
-    [el.baseDomain, el.tmdbApiKey, el.enableImdb].forEach((input) => {
+    [el.baseDomain, el.tmdbApiKey, el.enableImdb, el.enableStream].forEach((input) => {
         input.addEventListener('change', () => {
             if (el.resultCard.classList.contains('show')) {
                 generate();
@@ -358,6 +366,7 @@
                 if (config.bd) el.baseDomain.value = config.bd;
                 if (config.tk) el.tmdbApiKey.value = config.tk;
                 if (config.imdb === false) el.enableImdb.checked = false;
+                if (config.stream === false) el.enableStream.checked = false;
             } catch (err) {
                 console.warn('预填配置解析失败:', err);
             }

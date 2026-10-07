@@ -80,9 +80,12 @@ const ALL_CATALOGS = [
  * 生成 Manifest（根据用户配置动态生成）
  * 
  * @param {string[]} enabledCategories - 启用的类型
+ * @param {Object} options - 选项
+ * @param {boolean} options.enableStream - 是否启用 stream 功能（默认 true）
  * @returns {Object}
  */
-export function generateManifest(enabledCategories) {
+export function generateManifest(enabledCategories, options = {}) {
+  const { enableStream = true } = options;
   const enabled = enabledCategories || ['movie', 'series', 'variety', 'anime', 'short'];
 
   // 过滤目录
@@ -96,6 +99,13 @@ export function generateManifest(enabledCategories) {
       ],
     }));
 
+  // ===== 动态生成 resources =====
+  const resources = ['catalog', 'meta'];
+  if (enableStream) {
+    resources.push('stream');
+  }
+
+
   return {
     id: 'com.local.jinpai',
     version: '1.0.0',
@@ -103,7 +113,8 @@ export function generateManifest(enabledCategories) {
     description: '基于 Vercel Edge Functions 的 Stremio 影视插件，对接 jpyy.com 影视站，提供目录浏览、搜索、元数据获取和流媒体播放功能, 支持电影、电视剧、综艺、动漫和短剧等类型.兼容站内 ID 与 IMDb ID 双格式。仅供学习、演示使用！',
     logo: 'https://obs.3688baihuo.com/upload/site_ico/20260531-1/92da5ddc802c076de628be1b70e6fb90_180x180.png',
 
-    resources: ['catalog', 'meta', 'stream'],
+    // resources: ['catalog', 'meta', 'stream'],
+    resources,      // 动态生成resources
     types: ['movie', 'series'],
     catalogs,
     idPrefixes: ['tt', 'jp'],

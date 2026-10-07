@@ -65,6 +65,7 @@ function buildConfig() {
 
     // ===== 功能开关 =====
     ENABLE_IMDB: user.imdb !== false,
+    ENABLE_STREAM: user.stream !== false,
 
     // ===== 支持类型（新增）=====
     ENABLED_CATEGORIES: enabledCategories,

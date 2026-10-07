@@ -13,7 +13,6 @@
  * - Meta.videos[].id 是集级（jp146932:1:1）
  * - Stream 的 id 是集级（jp146932:1:1）
  */
-// import { MANIFEST } from './manifest.js';
 import { generateManifest } from './manifest.js';
 import { CONFIG } from './config.js';
 import { fetchCatalog, fetchDetail, fetchEpisodes, searchVideos, fetchStream } from './adapter.js';
@@ -121,11 +120,12 @@ export async function handleRequest(request, env, ctx) {
 
     // ===== 动态生成 Manifest =====
     const enabledCategories = CONFIG.ENABLED_CATEGORIES || ['movie', 'series', 'variety', 'anime', 'short'];
-    const manifest = generateManifest(enabledCategories);
+    const enableStream = CONFIG.ENABLE_STREAM !== false;  // 默认启用 stream  
+    const manifest = generateManifest(enabledCategories, { enableStream });
 
     console.log(`[Manifest] 📋 启用类型: ${enabledCategories.join(', ')}`);
     console.log(`[Manifest] 📋 目录数: ${manifest.catalogs.length}`);
-
+    console.log(`[Manifest] 📋 Stream 功能: ${enableStream ? '启用' : '禁用'}`);
     return jsonResponse(manifest, 0);
   }
 
@@ -416,6 +416,12 @@ async function handleMeta(routeType, rawEncodedId) {
 // ==========================================
 
 async function handleStream(routeType, rawEncodedId) {
+  // ===== 防御：Stream 功能被禁用 =====
+  if (CONFIG.ENABLE_STREAM === false) {
+    console.log(`[Stream] ⚠️ Stream 功能已禁用（用户配置）`);
+    return jsonResponse({ streams: [] });
+  }
+
   const parsed = parseId(rawEncodedId);
   console.log(`[Stream] 🔍 source=${parsed.source}, rawId=${parsed.rawId}`);
 
