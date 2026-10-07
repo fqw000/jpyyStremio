@@ -35,7 +35,7 @@
         baseDomain: $('baseDomain'),
         tmdbApiKey: $('tmdbApiKey'),
         enableImdb: $('enableImdb'),
-        enalbeStream: $('enableStream'),
+        enableStream: $('enableStream'),
         toggleTmdbKey: $('toggleTmdbKey'),
 
         generateBtn: $('generateBtn'),
@@ -323,7 +323,7 @@
     el.toggleTmdbKey.addEventListener('click', toggleTmdbKey);
 
     // 输入变化时自动更新（如果结果卡片已显示）
-    [el.baseDomain, el.tmdbApiKey, el.enableImdb, el.enableStream].forEach((input) => {
+    [el.baseDomain, el.tmdbApiKey, el.enableImdb, el.enableStream].filter(Boolean).forEach((input) => {
         input.addEventListener('change', () => {
             if (el.resultCard.classList.contains('show')) {
                 generate();
@@ -341,7 +341,7 @@
     });
 
     // 回车键快捷生成
-    [el.baseDomain, el.tmdbApiKey].forEach((input) => {
+    [el.baseDomain, el.tmdbApiKey].filter(Boolean).forEach((input) => {
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 generate();

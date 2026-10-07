@@ -69,11 +69,11 @@
  * 目录定义（完整版）
  */
 const ALL_CATALOGS = [
-  { type: 'movie',  id: 'jinpai-movie',   name: '自用接口 - 电影',   key: 'movie' },
-  { type: 'series', id: 'jinpai-series',  name: '自用接口 - 电视剧', key: 'series' },
-  { type: 'series', id: 'jinpai-variety', name: '自用接口 - 综艺',   key: 'variety' },
-  { type: 'series', id: 'jinpai-anime',   name: '自用接口 - 动漫',   key: 'anime' },
-  { type: 'series', id: 'jinpai-short',   name: '自用接口 - 短剧',   key: 'short' },
+  { type: 'movie', id: 'jinpai-movie', name: '自用接口 - 电影', key: 'movie' },
+  { type: 'series', id: 'jinpai-series', name: '自用接口 - 电视剧', key: 'series' },
+  { type: 'series', id: 'jinpai-variety', name: '自用接口 - 综艺', key: 'variety' },
+  { type: 'series', id: 'jinpai-anime', name: '自用接口 - 动漫', key: 'anime' },
+  { type: 'series', id: 'jinpai-short', name: '自用接口 - 短剧', key: 'short' },
 ];
 
 /**
@@ -109,8 +109,8 @@ export function generateManifest(enabledCategories, options = {}) {
   return {
     id: 'com.local.jinpai',
     version: '1.0.0',
-    name: '自用接口',
-    description: '基于 Vercel Edge Functions 的 Stremio 影视插件，对接 jpyy.com 影视站，提供目录浏览、搜索、元数据获取和流媒体播放功能, 支持电影、电视剧、综艺、动漫和短剧等类型.兼容站内 ID 与 IMDb ID 双格式。仅供学习、演示使用！',
+    name: 'jpyy',
+    description: '[stream 有时含有id校验会导致无法播放，请通过 配置页面 配合jpyy provider]。 提供目录浏览、搜索、元数据获取和流媒体播放功能, 支持电影、电视剧、综艺、动漫和短剧等类型.兼容站内 ID 与 IMDb ID 双格式。仅供学习、演示使用！',
     logo: 'https://obs.3688baihuo.com/upload/site_ico/20260531-1/92da5ddc802c076de628be1b70e6fb90_180x180.png',
 
     // resources: ['catalog', 'meta', 'stream'],
@@ -118,7 +118,21 @@ export function generateManifest(enabledCategories, options = {}) {
     types: ['movie', 'series'],
     catalogs,
     idPrefixes: ['tt', 'jp'],
+
+    behaviorHints: {
+      configurable: true, // 启用配置按钮
+      // 根据你的安装流程决定：
+      // 如果强制配置，设为 true；如果允许直接安装，设为 false
+      configurationRequired: false,
+    },
+    // 重要：声明你的配置项，即使你使用自定义 /configure 页面
+    config: [
+      { key: 'bd', title: '资源站域名', type: 'text', required: false },
+      { key: 'tk', title: 'TMDB API Key', type: 'text', required: false },
+      { key: 'stream', title: '启用 Stream', type: 'boolean', required: false }
+    ]
   };
+
 }
 
 /**

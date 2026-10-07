@@ -56,13 +56,38 @@ const DOMAIN_API = {
 // ==========================================
 
 /**
+ * 获取用户配置的域名（最高优先级）
+ * 
+ * 用户通过 /configure 页面的 ?cfg={bd:xxx} 配置
+ * 
+ * @returns {string|null}
+ */
+function getUserDomain() {
+  const userConfig = (typeof globalThis !== 'undefined' && globalThis.__USER_CONFIG) || {};
+  return userConfig.bd || null;
+}
+
+/**
  * 获取当前使用的域名
+ * 
+ * 优先级：
+ *   ① 用户配置 bd（最高）
+ *   ② 自动探测结果
+ *   ③ 硬编码兜底
  * 
  * @returns {string}
  */
 export function getBaseDomain() {
+  // ① 用户配置优先
+  const userDomain = getUserDomain();
+  if (userDomain) {
+    return userDomain;
+  }
+
+  // ② 探测结果
   return currentDomain || CONFIG.BASE_DOMAIN;
 }
+
 
 /**
  * 标记域名失败
@@ -72,6 +97,13 @@ export function getBaseDomain() {
  * @returns {Promise<string>}
  */
 export async function markDomainFailed(failedDomain, logger = null) {
+  // ===== 用户配置的域名 → 不触发自动切换 =====
+  const userDomain = getUserDomain();
+  if (userDomain) {
+    console.log(`[Domain] 👤 用户配置域名失败: ${userDomain}（跳过自动切换）`);
+    return userDomain;
+  }
+
   const stat = domainStats.get(failedDomain) || { failCount: 0, successCount: 0 };
   stat.failCount++;
   domainStats.set(failedDomain, stat);
@@ -96,7 +128,14 @@ export async function markDomainFailed(failedDomain, logger = null) {
  * @returns {Promise<string>}
  */
 export async function probeAndUpdate(logger = null) {
-  // ===== 1. Redis 锁 =====
+  // ===== 0. 用户配置了域名 → 跳过所有探测 =====
+  const userDomain = getUserDomain();
+  if (userDomain) {
+    console.log(`[Domain] 👤 使用用户配置域名: ${userDomain}（跳过探测）`);
+    return userDomain;
+  }
+
+  // ===== 1. Redis 锁 ======
   const lockAcquired = await getCache(REDIS_LOCK_KEY);
   if (lockAcquired) {
     console.log(`[Domain] ⏳ 其他实例正在探测，等待...`);

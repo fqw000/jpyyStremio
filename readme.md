@@ -215,6 +215,7 @@ https://stremio.yourdomain.com/configure
 | **TMDB API Key** | `tk` | 内置 | 防止限流，可选 |
 | **支持类型** | `cats` | 全部 5 类 | 电影/电视剧/综艺/动漫/短剧 |
 | **启用 IMDb 解析** | `imdb` | `true` | 支持 tt 格式 |
+|**启用 stream **| `stream` | `true` | 防止id校验无法播放，配合jpyyProvider使用|
 
 ### 配置传递方式
 
@@ -280,6 +281,8 @@ const DEFAULTS = {
 | `src/config.js` | 后端兜底域名（API 全部失败时使用） |
 | `public/configure.js` | 前端 placeholder，判断"是否与默认相同" |
 | `README.md` | 用户文档示例 |
+
+### 使用provider的要关注provider项目是否更新domain
 
 ### 优先级说明
 
