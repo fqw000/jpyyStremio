@@ -61,7 +61,8 @@ function buildConfig() {
     // ===== API 密钥 =====
     API_KEY: 'cb808529bae6b6be45ecfab29a4889bc',
     TMDB_API_KEY: user.tk || 'e5c3c7269a147fee368c3649ddd98875',
-    DEVICE_ID: '63ffad23-a598-4f96-85d7-7bf5f3e4a0a2',
+    DEVICE_ID: getUUID(),  // 动态生成（每实例独立）
+    // DEVICE_ID: '63ffad23-a598-4f96-85d7-7bf5f3e4a0a2',  // 固定值
 
     // ===== 功能开关 =====
     ENABLE_IMDB: user.imdb !== false,
@@ -115,6 +116,22 @@ export function getConfig() {
  * 使用 Proxy 让每次属性访问都通过 getConfig()，
  * 从而支持运行时配置变化。
  */
+/**
+ * 生成 UUID v4
+ * 
+ * 用途：动态生成 Device ID，避免所有用户共享同一 ID
+ * 每次 Worker 实例启动时生成一次（冷启动时刷新）
+ * 
+ * @returns {string} UUID 字符串
+ */
+function getUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export const CONFIG = new Proxy({}, {
   get(target, prop) {
     const config = getConfig();

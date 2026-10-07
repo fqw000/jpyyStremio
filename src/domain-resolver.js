@@ -43,13 +43,31 @@ const REDIS_TTL_SECONDS = 7 * 24 * 60 * 60;
 //  配置基础域名
 const BASE_DOMAIN = 'jpyy.com';
 
+
 /** 域名 API 配置 */
 const DOMAIN_API = {
   url: `https://${BASE_DOMAIN}/api/mw-movie/anonymous/website/get/domain`,
   params: { websiteSeoId: 86 },
   signKey: 'cb808529bae6b6be45ecfab29a4889bc',
-  deviceId: '39cb57bc-f77b-42c8-84e8-25fe857385d1',
+  // deviceId: '39cb57bc-f77b-42c8-84e8-25fe857385d1',
+  deviceId: getUUID(),  // 动态生成（每实例独立）
+
 };
+
+/* 生成 UUID v4
+* 
+* 用途：动态生成 Device ID，避免所有用户共享同一 ID
+* 每次 Worker 实例启动时生成一次（冷启动时刷新）
+* 
+* @returns {string} UUID 字符串
+*/
+function getUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 // ==========================================
 // 主入口（同步，快速返回）
