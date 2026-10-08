@@ -69,11 +69,11 @@
  * 目录定义（完整版）
  */
 const ALL_CATALOGS = [
-  { type: 'movie', id: 'jinpai-movie', name: '自用接口 - 电影', key: 'movie' },
-  { type: 'series', id: 'jinpai-series', name: '自用接口 - 电视剧', key: 'series' },
-  { type: 'series', id: 'jinpai-variety', name: '自用接口 - 综艺', key: 'variety' },
-  { type: 'series', id: 'jinpai-anime', name: '自用接口 - 动漫', key: 'anime' },
-  { type: 'series', id: 'jinpai-short', name: '自用接口 - 短剧', key: 'short' },
+  { type: 'movie', id: 'jinpai-movie', name: 'jpyy - 电影', key: 'movie' },
+  { type: 'series', id: 'jinpai-series', name: 'jpyy - 电视剧', key: 'series' },
+  { type: 'series', id: 'jinpai-variety', name: 'jpyy - 综艺', key: 'variety' },
+  { type: 'series', id: 'jinpai-anime', name: 'jpyy - 动漫', key: 'anime' },
+  { type: 'series', id: 'jinpai-short', name: 'jpyy - 短剧', key: 'short' },
 ];
 
 /**
