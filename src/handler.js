@@ -15,11 +15,12 @@
  */
 import { generateManifest } from './manifest.js';
 import { CONFIG } from './config.js';
-import { fetchCatalog, fetchDetail, fetchEpisodes, searchVideos, fetchStream } from './adapter.js';
+import { fetchCatalog, fetchDetail, fetchEpisodes, fetchVodName, searchVideos, fetchStream } from './adapter.js';
 import { resolveImdbToVod } from './imdb-resolver.js';
 import { searchTmdbByTitle, fetchSeasonThumbnails } from './tmdb.js';
 import { probeAndUpdate, getDomainStatus, clearDomainCache } from './domain-resolver.js';
 import { getCache, setCache } from './cache.js';
+import { fetchCatalog555, fetchDetail555, fetchEpisodes555, fetchStream555 } from './adapter-555.js';
 
 // ==========================================
 // TMDB 缓存（改为 Redis）
@@ -114,16 +115,30 @@ export async function handleRequest(request, env, ctx) {
 
   // ===== 1. Manifest =====
   if (pathname === '/manifest.json') {
-    probeAndUpdate().catch(err => {
-      console.warn(`[Domain] 后台探测失败: ${err.message}`);
+    // 读取配置
+    const enabledCategories = CONFIG.ENABLED_CATEGORIES || ['movie', 'series', 'variety', 'anime', 'short'];
+    const enableStream = CONFIG.ENABLE_STREAM !== false;
+    const enableJpyy = CONFIG.ENABLE_JPYY !== false;
+    const enable555 = CONFIG.ENABLE_555 !== false;
+    const categories555 = CONFIG.ENABLED_555_CATEGORIES
+      || ['movie', 'series', 'anime', 'variety', 'short', 'sports', 'new'];
+
+    // 只在 jpyy 启用时后台探测域名（555 域名是硬编码+用户配置，无需探测）
+    if (enableJpyy) {
+      probeAndUpdate().catch(err => {
+        console.warn(`[Domain] 后台探测失败: ${err.message}`);
+      });
+    }
+
+    const manifest = generateManifest(enabledCategories, {
+      enableStream,
+      enableJpyy,
+      enable555,
+      categories555,
     });
 
-    // ===== 动态生成 Manifest =====
-    const enabledCategories = CONFIG.ENABLED_CATEGORIES || ['movie', 'series', 'variety', 'anime', 'short'];
-    const enableStream = CONFIG.ENABLE_STREAM !== false;  // 默认启用 stream  
-    const manifest = generateManifest(enabledCategories, { enableStream });
-
-    console.log(`[Manifest] 📋 启用类型: ${enabledCategories.join(', ')}`);
+    console.log(`[Manifest] 📋 jpyy: ${enableJpyy ? '启用' : '禁用'}, 555: ${enable555 ? '启用' : '禁用'}`);
+    console.log(`[Manifest] 📋 555 分类: [${categories555.join(', ')}]`);
     console.log(`[Manifest] 📋 目录数: ${manifest.catalogs.length}`);
     console.log(`[Manifest] 📋 Stream 功能: ${enableStream ? '启用' : '禁用'}`);
     return jsonResponse(manifest, 0);
@@ -149,11 +164,23 @@ export async function handleRequest(request, env, ctx) {
       }
     }
 
+    // ===== 兼容 query string 形式的 extras =====
+    // Stremio 标准用 path（/catalog/xxx/skip=48.json），
+    // 但某些客户端和测试工具会用 query string（/catalog/xxx.json?skip=48）。
+    // path extras 优先（不覆盖已有值）。
+    for (const key of ['skip', 'search', 'genre']) {
+      const qv = url.searchParams.get(key);
+      if (qv !== null && extras[key] === undefined) {
+        extras[key] = qv;
+      }
+    }
+
     console.log(`[Worker] 📦 Catalog extras: ${JSON.stringify(extras)}`);
 
-    if (extras.search) {
+    if (extras.search && !catalogId.startsWith('555-')) {
       return await handleSearchInCatalog(catalogType, catalogId, extras.search, extras.skip);
     }
+
 
     const skip = extras.skip ? parseInt(extras.skip, 10) : 0;
     return await handleCatalog(catalogId, skip);
@@ -201,6 +228,19 @@ export async function handleRequest(request, env, ctx) {
     const { getCacheStats } = await import('./cache.js');
     return jsonResponse(getCacheStats());
   }
+  // ===== 8. Debug 555 =====
+  if (pathname === '/debug/555') {
+    const action = url.searchParams.get('action');
+
+    if (action === 'clear') {
+      const { clearCookieCache } = await import('./challenge-555.js');
+      await clearCookieCache();
+      return jsonResponse({ message: '555 cookie cache cleared' });
+    }
+
+    const { get555Status } = await import('./adapter-555.js');
+    return jsonResponse(get555Status());
+  }
 
   console.log(`[Worker] ❌ 404: ${pathname}`);
   return new Response('Not Found', { status: 404 });
@@ -213,6 +253,20 @@ export async function handleRequest(request, env, ctx) {
 function parseId(rawEncodedId) {
   const rawId = decodeURIComponent(rawEncodedId);
 
+  // ===== 555 源：dy555{vodId} 或 dy555{vodId}:{season}:{episode} =====
+  // 注意：前缀不能包含冒号，否则 Stremio 客户端会把内部冒号误解析为 season/episode 分隔符
+  if (rawId.startsWith('dy555')) {
+    const rest = rawId.slice(5);
+    const parts = rest.split(':');
+    const vodId = parts[0];
+    const season = parts[1] !== undefined ? (parseInt(parts[1], 10) || 1) : 1;
+    const episode = parts[2] !== undefined ? (parseInt(parts[2], 10) || 1) : 1;
+    const hasSeasonEpisode = parts.length >= 3;
+
+    return { source: '555', vodId, season, episode, hasSeasonEpisode, rawId };
+  }
+
+  // ===== 原有逻辑 =====
   let baseId = rawId;
   let season = 1;
   let episode = 1;
@@ -275,6 +329,12 @@ async function handleSearchInCatalog(type, catalogId, query, skipStr) {
 async function handleCatalog(catalogId, skip = 0) {
   console.log(`[Catalog] 📂 catalogId=${catalogId}, skip=${skip}`);
 
+  // ===== 555 源 =====
+  if (catalogId.startsWith('555-')) {
+    return await handleCatalog555(catalogId, skip);
+  }
+
+  // ===== jpyy 源（原逻辑）=====
   const items = await fetchCatalog(catalogId, skip);
   const isMovieCatalog = catalogId === 'jinpai-movie';
 
@@ -297,6 +357,32 @@ async function handleCatalog(catalogId, skip = 0) {
   return jsonResponse({ metas }, 300);
 }
 
+/**
+ * 555 catalog 处理
+ * 
+ * 完全按 catalog 定义走：
+ *   - 555-movie → movie，id='555:{vodId}'
+ *   - 其他       → series，id='555:{vodId}:1:1'
+ */
+async function handleCatalog555(catalogId, skip) {
+  const items = await fetchCatalog555(catalogId, skip);
+  const isMovie = catalogId === '555-movie';
+
+  const metas = items.map(item => {
+    const id = isMovie ? `dy555${item.vodId}` : `dy555${item.vodId}:1:1`;
+    return {
+      id,
+      type: isMovie ? 'movie' : 'series',
+      name: item.vodName,
+      poster: item.vodPic || '',
+      description: item.vodRemarks || '',
+    };
+  });
+
+  console.log(`[Catalog 555] ✅ ${catalogId}: ${metas.length} metas (skip=${skip})`);
+  return jsonResponse({ metas }, 300);
+}
+
 // ==========================================
 // Meta 处理
 // ==========================================
@@ -305,6 +391,11 @@ async function handleCatalog(catalogId, skip = 0) {
 async function handleMeta(routeType, rawEncodedId) {
   const parsed = parseId(rawEncodedId);
   console.log(`[Meta] 🔍 source=${parsed.source}, rawId=${parsed.rawId}`);
+
+  // ===== 555 源 =====
+  if (parsed.source === '555') {
+    return await handleMeta555(routeType, parsed);
+  }
 
   // ===== IMDb → vodId =====
   let resolvedMeta = null;
@@ -411,6 +502,80 @@ async function handleMeta(routeType, rawEncodedId) {
   return jsonResponse({ meta }, 600);
 }
 
+
+/**
+ * 555 meta 处理
+ *
+ * 关键差异：
+ *   - 555 无季概念，season 固定为 1
+ *   - meta.id 是影片级（dy555{vodId}）
+ *   - videos[].id 是集级（dy555{vodId}:1:{ep}）
+ *   - 源信息按集聚合，meta 只展示集数，不展示源
+ */
+async function handleMeta555(routeType, parsed) {
+  const detail = await fetchDetail555(parsed.vodId);
+  if (!detail) {
+    console.warn(`[Meta 555] ❌ detail 为空: ${parsed.vodId}`);
+    return jsonResponse({ meta: null });
+  }
+
+  const metaId = `dy555${parsed.vodId}`;
+  const isSeries = routeType === 'series';
+
+  const meta = {
+    id: metaId,
+    type: routeType,
+    name: detail.vodName,
+    description: detail.vodContent || detail.vodRemarks || '暂无描述',
+    poster: detail.vodPic || '',
+    background: detail.vodPic || '',
+    year: detail.vodYear ? String(detail.vodYear) : '',
+    director: detail.vodDirector
+      ? detail.vodDirector.split(/[,，]/).map(d => d.trim()).filter(Boolean)
+      : [],
+    cast: detail.vodActor
+      ? detail.vodActor.split(/[,，]/).map(a => a.trim()).filter(Boolean).slice(0, 10)
+      : [],
+    genres: detail.vodClass
+      ? detail.vodClass.split(/[,，]/).map(g => g.trim()).filter(Boolean)
+      : [],
+    releaseInfo: detail.vodYear ? String(detail.vodYear) : '',
+  };
+
+  // ===== 电影：单集 =====
+  if (!isSeries) {
+    meta.videos = [{
+      id: metaId,
+      title: detail.vodName,
+      thumbnail: detail.vodPic || '',
+    }];
+    console.log(`[Meta 555] ✅ Built movie: "${meta.name}"`);
+    return jsonResponse({ meta }, 600);
+  }
+
+  // ===== 剧集：从 detail.sources 中合并出集数 =====
+  // 这里不需要多源信息，只要知道有多少集、每集的 nid 即可
+  // 为了保持 meta.videos 的 id 格式，我们从第一个源里取集列表
+  const firstSource = (detail.sources || [])[0];
+  if (firstSource && firstSource.episodes.length > 0) {
+    const fallbackThumbnail = detail.vodPic || '';
+    meta.videos = firstSource.episodes.map((ep, index) => ({
+      id: `dy555${parsed.vodId}:1:${index + 1}`,
+      season: 1,
+      episode: index + 1,
+      title: ep.name || `第${index + 1}集`,
+      thumbnail: fallbackThumbnail,
+      released: new Date().toISOString(),
+    }));
+  } else {
+    meta.videos = [];
+  }
+
+  console.log(`[Meta 555] ✅ Built series: "${meta.name}", videos=${meta.videos.length}`);
+  return jsonResponse({ meta }, 600);
+}
+
+
 // ==========================================
 // Stream 处理（改用 fetchEpisodes）
 // ==========================================
@@ -424,6 +589,11 @@ async function handleStream(routeType, rawEncodedId) {
 
   const parsed = parseId(rawEncodedId);
   console.log(`[Stream] 🔍 source=${parsed.source}, rawId=${parsed.rawId}`);
+
+  // ===== 555 源 =====
+  if (parsed.source === '555') {
+    return await handleStream555(routeType, parsed);
+  }
 
   let vodId = parsed.vodId;
   let episode = parsed.episode;
@@ -470,6 +640,10 @@ async function handleStream(routeType, rawEncodedId) {
     return jsonResponse({ streams: [] });
   }
 
+  // ===== 获取影片名称（用于 stream.name）=====
+  // 通过 fetchVodName 读取（fetchEpisodes 已顺带缓存，零额外请求）
+  const movieName = (await fetchVodName(vodId)) || 'JPYY';
+
   // ===== 获取播放地址（缓存 10 分钟）=====
   const streams = await fetchStream(vodId, nid);
   if (streams.length === 0) {
@@ -480,7 +654,7 @@ async function handleStream(routeType, rawEncodedId) {
   const stremioStreams = streams.map(s => {
     const isHls = s.url.includes('.m3u8');
     return {
-      name: 'JPYY',
+      name: movieName,
       title: `${s.quality}`,
       url: s.url,
       behaviorHints: {
@@ -493,6 +667,105 @@ async function handleStream(routeType, rawEncodedId) {
 
   console.log(`[Stream] ✅ Returning ${stremioStreams.length} streams`);
   return jsonResponse({ streams: stremioStreams }, 60);
+}
+
+
+/**
+ * 555 stream 处理（多源版）
+ *
+ * 逻辑：
+ *   1. fetchEpisodes555 拿到按集合并的剧集列表
+ *   2. 找到目标集，拿到该集的所有源
+ *   3. 为每个源分别调用 fetchStream555，拿到真实 URL
+ *   4. 每个源生成一个 Stremio stream，name 用影片名称
+ *
+ * stream 字段：
+ *   - name:   影片名称（用户可见）
+ *   - title:  源名称（如"线路1"、"量子资源"）
+ *   - url:    真实播放地址
+ *   - type:   'hls'（如果是 .m3u8）
+ */
+async function handleStream555(routeType, parsed) {
+  const { vodId, episode } = parsed;
+  console.log(`[555 Stream] 🔍 vodId=${vodId}, episode=${episode}`);
+
+  // ===== 1. 获取详情（拿影片名称）=====
+  const detail = await fetchDetail555(vodId);
+  const movieName = detail?.vodName || `555-${vodId}`;
+
+  // ===== 2. 获取合并后的剧集列表 =====
+  const episodes = await fetchEpisodes555(vodId);
+  if (!episodes || episodes.length === 0) {
+    console.log(`[555 Stream] ❌ No episodes for ${vodId}`);
+    return jsonResponse({ streams: [] });
+  }
+
+  // ===== 3. 找目标集 =====
+  let targetEp = null;
+
+  if (episode > 0) {
+    // 优先按集名中的数字匹配
+    targetEp = episodes.find(ep => {
+      const m = String(ep.name).match(/(\d+)/);
+      return m && parseInt(m[1], 10) === episode;
+    });
+
+    // 兜底：按索引
+    if (!targetEp && episode <= episodes.length) {
+      targetEp = episodes[episode - 1];
+      console.log(`[555 Stream] ⚠️ 数字匹配失败，按索引取第 ${episode} 项`);
+    }
+  }
+
+  // 最终兜底：取第一集（电影场景）
+  if (!targetEp) {
+    targetEp = episodes[0];
+    console.log(`[555 Stream] ⚠️ 使用第一集: ${targetEp.name}`);
+  }
+
+  console.log(
+    `[555 Stream] 🎯 Target: name="${targetEp.name}", sources=${targetEp.sources.length}`
+  );
+
+  // ===== 4. 为每个源获取流 =====
+  const allStreams = [];
+
+  for (const src of targetEp.sources) {
+    try {
+      const urls = await fetchStream555(vodId, src.sid, src.nid);
+      for (const s of urls) {
+        const isHls = s.url.includes('.m3u8');
+        allStreams.push({
+          name: movieName,                      // ★ 影片名称
+          title: src.sourceName || `线路${src.sid}`,  // ★ 源名称
+          url: s.url,
+          behaviorHints: {
+            notWebReady: false,
+            bingeGroup: `555-${vodId}-${src.sid}`, // 按源分 bingeGroup
+          },
+          ...(isHls && { type: 'hls' }),
+        });
+      }
+    } catch (err) {
+      console.warn(
+        `[555 Stream] ⚠️ 源 ${src.sid} (${src.sourceName}) 失败: ${err.message}`
+      );
+      // 单源失败不影响其他源
+    }
+  }
+
+  if (allStreams.length === 0) {
+    console.log(`[555 Stream] ⚠️ 所有源都失败`);
+    return jsonResponse({ streams: [] });
+  }
+
+  // ===== 5. 按源顺序排序（线路1 在前）=====
+  // allStreams 已经按 targetEp.sources 的顺序生成，无需再排
+
+  console.log(
+    `[555 Stream] ✅ Returning ${allStreams.length} streams（来自 ${targetEp.sources.length} 个源）`
+  );
+  return jsonResponse({ streams: allStreams }, 60);
 }
 
 // ==========================================

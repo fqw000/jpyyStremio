@@ -701,3 +701,46 @@ img{
   border-color: var(--success);
   color: var(--success);
 }
+
+
+/* ========================================
+   源配置区（jpyy / 555 各自一块）
+   ======================================== */
+
+.source-section {
+  margin-top: 24px;
+  padding: 18px 16px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.01);
+  transition: opacity 0.2s, filter 0.2s;
+}
+
+.source-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+  letter-spacing: 0.03em;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.source-section-title .icon {
+  font-size: 15px;
+}
+
+/* 源被禁用时整块变灰 */
+.source-section.disabled {
+  opacity: 0.4;
+  filter: grayscale(0.8);
+  pointer-events: none;
+}
+
+/* 类别网格在源区内稍微收紧 */
+.source-section .checkbox-grid {
+  margin-top: 0;
+}

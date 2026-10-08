@@ -45,6 +45,47 @@ function buildConfig() {
     enabledCategories = ALL_CATEGORIES;
   }
 
+  // ===== 解析启用的源 =====
+  // user.srcs 可能是：
+  //   undefined        → 全部启用（默认）
+  //   ['jpyy']         → 只启用 jpyy
+  //   ['555']          → 只启用 555
+  //   ['jpyy', '555']  → 都启用
+  //   []               → 异常，兜底为 ['jpyy']
+  const ALL_SOURCES = ['jpyy', '555'];
+  let enabledSources;
+
+  if (Array.isArray(user.srcs)) {
+    if (user.srcs.length === 0) {
+      enabledSources = ['jpyy'];
+    } else {
+      enabledSources = user.srcs.filter(s => ALL_SOURCES.includes(s));
+      if (enabledSources.length === 0) {
+        enabledSources = ['jpyy'];
+      }
+    }
+  } else {
+    enabledSources = ALL_SOURCES;  // 默认全开
+  }
+
+  // ===== 解析 555 分类 =====
+  // user.c555 可能是：
+  //   undefined  → 全部启用（默认）
+  //   ['movie']  → 只启用电影
+  //   []         → 全部禁用（异常，但允许）
+  const ALL_555_CATEGORIES = ['movie', 'series', 'anime', 'variety', 'short', 'sports', 'new'];
+  let enabled555Categories;
+
+  if (Array.isArray(user.c555)) {
+    if (user.c555.length === 0) {
+      enabled555Categories = [];
+    } else {
+      enabled555Categories = user.c555.filter(c => ALL_555_CATEGORIES.includes(c));
+    }
+  } else {
+    enabled555Categories = ALL_555_CATEGORIES;  // 默认全开
+  }
+
   return {
     // ===== 资源站配置 =====
     //  资源站的查找方式是 通过fofa 查找 `body="obs.3688baihuo.com/upload/site_ico"` 的站点
@@ -54,9 +95,24 @@ function buildConfig() {
       user.bd || '0996zp.com',
       // 'www.' + (user.bd || '0996zp.com'), // 兼容部分站点需要 www 前缀
       'lwdys.com',
-      'x8kb9k8.coßm',
+      '0bv77aw.com',
+      '49duoaz.com',
+      '610pkea.com',
+      '0av2wu.com',
+      'kqlys.com',
+      'ui07nxj.com',
+      'x8kb9k8.com',
       'jpyy5.com'
     ].filter(Boolean),
+    
+    // ===== 源开关（新增）=====
+    ENABLED_SOURCES: enabledSources,
+    ENABLE_JPYY: enabledSources.includes('jpyy'),
+    ENABLE_555: enabledSources.includes('555'),
+
+    // ===== 555 配置（新增）=====
+    DOMAIN_555: user.d555 || null,           // null → adapter-555 用默认域名
+    ENABLED_555_CATEGORIES: enabled555Categories,
 
     // ===== API 密钥 =====
     API_KEY: 'cb808529bae6b6be45ecfab29a4889bc',
@@ -73,7 +129,7 @@ function buildConfig() {
 
     // ===== 网络配置 =====
     USER_AGENT: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    REQUEST_TIMEOUT: 5000,
+    REQUEST_TIMEOUT: 50000,
     RETRY_COUNT: 1,
     RETRY_DELAY: 300,
 

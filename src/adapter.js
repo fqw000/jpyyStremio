@@ -228,15 +228,22 @@ export async function fetchEpisodes(vodId) {
   const detailCached = await getCache(`detail:${vodId}`);
   if (detailCached && Array.isArray(detailCached.episodes)) {
     const eps = detailCached.episodes;
+
+    // ★ 顺带缓存 vodName（关键：避免 handleStream 再调 fetchDetail）
+    if (detailCached.vodName) {
+      await setCache(`vodname:${vodId}`, detailCached.vodName, 604800);
+    }
+
     console.log(`[Adapter] ✅ 从 Detail 缓存提取 Episodes: ${vodId} (${eps.length} 集)`);
-    // 回填独立 episodes 缓存，加速后续访问
+
+    // 回填独立 episodes 缓存
     if (eps.length > 0) {
       await setCache(cacheKey, eps, 1800);
     }
     return eps;
   }
 
-  // ===== 3. 都未命中，直连站点 =====
+  // ===== 3. 都未命中，回源站点 =====
   console.log(`[Adapter] 📺 fetchEpisodes: vodId=${vodId}`);
 
   const domain = getBaseDomain();
@@ -249,6 +256,11 @@ export async function fetchEpisodes(vodId) {
     return [];
   }
 
+  // ★ 顺带缓存 vodName（关键：Stream 直接播放时也能命中）
+  if (detail.vodName) {
+    await setCache(`vodname:${vodId}`, detail.vodName, 604800);
+  }
+
   const episodes = extractEpisodes(detail);
 
   if (episodes.length > 0) {
@@ -257,6 +269,59 @@ export async function fetchEpisodes(vodId) {
   }
 
   return episodes;
+}
+
+
+// ==========================================
+// VodName（独立缓存，Stream 流程用）
+// ==========================================
+
+/**
+ * 获取影片名称
+ * 
+ * 用于 Stream 流程的 stream.name 字段。
+ * 
+ * 缓存优先：
+ *   ① vodname:${vodId}（专属，最快）
+ *   ② detail:${vodId}（通常已建立）
+ *   ③ 回源 fetchDetail（兜底，实际不应走到）
+ * 
+ * 设计意图：
+ *   - fetchEpisodes 在提取/回源时顺带写入 vodname 缓存
+ *   - 因此 handleStream 调用 fetchVodName 时应 100% 命中专属缓存
+ *   - 避免 handleStream 为了拿名字再调一次 fetchDetail
+ * 
+ * @param {string} vodId
+ * @returns {Promise<string|null>}
+ */
+export async function fetchVodName(vodId) {
+  const cacheKey = `vodname:${vodId}`;
+
+  // ① 专属缓存
+  const cached = await getCache(cacheKey);
+  if (cached) {
+    console.log(`[Adapter] ✅ VodName 缓存命中: ${vodId} → "${cached}"`);
+    return cached;
+  }
+
+  // ② detail 缓存
+  const detailCached = await getCache(`detail:${vodId}`);
+  if (detailCached?.vodName) {
+    await setCache(cacheKey, detailCached.vodName, 604800);  // 7 天
+    console.log(`[Adapter] ✅ VodName 从 Detail 缓存提取: ${vodId}`);
+    return detailCached.vodName;
+  }
+
+  // ③ 回源（兜底）
+  const detail = await fetchDetail(vodId);
+  if (detail?.vodName) {
+    await setCache(cacheKey, detail.vodName, 604800);
+    console.log(`[Adapter] ✅ VodName 回源获取: ${vodId}`);
+    return detail.vodName;
+  }
+
+  console.warn(`[Adapter] ⚠️ VodName 获取失败: ${vodId}`);
+  return null;
 }
 
 // ==========================================

@@ -41,105 +41,199 @@
       </div>
     </section>
 
-    <!-- 配置项 -->
+     <!-- 配置项 -->
     <section class="card">
       <h2><span class="icon">⚙️</span> 高级配置</h2>
       <p class="hint">全部为可选项，不填则使用默认值</p>
 
-      <!-- 资源站域名 -->
-      <div class="form-group">
-        <label for="baseDomain">
-          资源站域名
-          <span class="optional">可选</span>
-        </label>
-        <input
-          type="text"
-          id="baseDomain"
-          placeholder="0996zp.com"
-          spellcheck="false"
-          autocomplete="off"
-        />
-        <span class="form-hint">
-          站点域名变更时可修改，留空使用默认 <code>0996zp.com</code>
-        </span>
-      </div>
-
-      <!-- TMDB API Key -->
-      <div class="form-group">
-        <label for="tmdbApiKey">
-          TMDB API Key
-          <span class="optional">可选</span>
-        </label>
-        <div class="input-with-toggle">
-          <input
-            type="password"
-            id="tmdbApiKey"
-            placeholder="留空使用内置 Key"
-            spellcheck="false"
-            autocomplete="off"
-          />
-          <button type="button" id="toggleTmdbKey" class="toggle-btn" title="显示/隐藏">
-            👁
-          </button>
-        </div>
-        <span class="form-hint">
-          用于 IMDb 解析，留空使用内置 Key。填自己的可避免公共 Key 限流
-        </span>
-      </div>
-
-      <!-- 支持类型 -->
+      <!-- 影视源开关 -->
       <div class="form-group">
         <label>
-          支持的类型
+          启用的影视源
           <span class="optional">可选</span>
         </label>
         <div class="checkbox-grid">
           <label class="checkbox-item">
-            <input type="checkbox" class="category-cb" value="movie" checked />
-            <span>🎬 电影</span>
+            <input type="checkbox" class="source-cb" value="jpyy" checked />
+            <span>🎬 金牌影视 (jpyy)</span>
           </label>
           <label class="checkbox-item">
-            <input type="checkbox" class="category-cb" value="series" checked />
-            <span>📺 电视剧</span>
-          </label>
-          <label class="checkbox-item">
-            <input type="checkbox" class="category-cb" value="variety" checked />
-            <span>🎤 综艺</span>
-          </label>
-          <label class="checkbox-item">
-            <input type="checkbox" class="category-cb" value="anime" checked />
-            <span>🎨 动漫</span>
-          </label>
-          <label class="checkbox-item">
-            <input type="checkbox" class="category-cb" value="short" checked />
-            <span>📱 短剧</span>
+            <input type="checkbox" class="source-cb" value="555" checked />
+            <span>🎥 555 电影</span>
           </label>
         </div>
         <span class="form-hint">
-          只显示勾选的类型，取消勾选可减少 Board 目录数量
+          至少选择一个源。取消勾选后，该源的目录与配置将不生效
         </span>
       </div>
 
-      <!-- IMDb 解析开关 -->
-      <div class="form-group checkbox-group">
-        <label>
-          <input type="checkbox" id="enableImdb" checked />
-          <span class="checkbox-text">
-            <strong>启用 IMDb 解析</strong>
-            <small>支持通过 tt 格式的 ID 播放（与其他 Addon 互通）</small>
+      <!-- ============ jpyy 专属配置 ============ -->
+      <div id="jpyySection" class="source-section">
+        <div class="source-section-title">
+          <span class="icon">🎬</span> 金牌影视 (jpyy) 配置
+        </div>
+
+        <!-- 资源站域名 -->
+        <div class="form-group">
+          <label for="baseDomain">
+            资源站域名
+            <span class="optional">可选</span>
+          </label>
+          <input
+            type="text"
+            id="baseDomain"
+            placeholder="0996zp.com"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <span class="form-hint">
+            站点域名变更时可修改，留空使用默认 <code>0996zp.com</code>
           </span>
-        </label>
+        </div>
+
+        <!-- TMDB API Key -->
+        <div class="form-group">
+          <label for="tmdbApiKey">
+            TMDB API Key
+            <span class="optional">可选</span>
+          </label>
+          <div class="input-with-toggle">
+            <input
+              type="password"
+              id="tmdbApiKey"
+              placeholder="留空使用内置 Key"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <button type="button" id="toggleTmdbKey" class="toggle-btn" title="显示/隐藏">
+              👁
+            </button>
+          </div>
+          <span class="form-hint">
+            用于 IMDb 解析，留空使用内置 Key。填自己的可避免公共 Key 限流
+          </span>
+        </div>
+
+        <!-- jpyy 支持类型 -->
+        <div class="form-group">
+          <label>
+            jpyy 支持的类型
+            <span class="optional">可选</span>
+          </label>
+          <div class="checkbox-grid">
+            <label class="checkbox-item">
+              <input type="checkbox" class="category-cb" value="movie" checked />
+              <span>🎬 电影</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="category-cb" value="series" checked />
+              <span>📺 电视剧</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="category-cb" value="variety" checked />
+              <span>🎤 综艺</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="category-cb" value="anime" checked />
+              <span>🎨 动漫</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="category-cb" value="short" checked />
+              <span>📱 短剧</span>
+            </label>
+          </div>
+          <span class="form-hint">
+            只显示勾选的类型，取消勾选可减少目录数量
+          </span>
+        </div>
+
+        <!-- IMDb 解析开关 -->
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="enableImdb" checked />
+            <span class="checkbox-text">
+              <strong>启用 IMDb 解析</strong>
+              <small>支持通过 tt 格式的 ID 播放（与其他 Addon 互通）</small>
+            </span>
+          </label>
+        </div>
+
+        <!-- Stream 功能开关 -->
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="enableStream" checked />
+            <span class="checkbox-text">
+              <strong>启用 Stream 流媒体功能</strong>
+              <small>关闭后 Addon 仅提供目录和元数据，不返回播放地址（适合流地址绑定 ip 导致无法播放的场景），关闭以后使用 jpyy 的 provider 本地获取流地址</small>
+            </span>
+          </label>
+        </div>
       </div>
 
-      <!-- Stream 功能开关（新增） -->
-      <div class="form-group checkbox-group">
-        <label>
-          <input type="checkbox" id="enableStream" checked />
-          <span class="checkbox-text">
-            <strong>启用 Stream 流媒体功能</strong>
-            <small>关闭后 Addon 仅提供目录和元数据，不返回播放地址（适合流地址绑定ip导致无法播放的场景），关闭以后使用jpyy的provider本地获取流地址，<a ref="https://github.com/fqw000/jpyyNuvioProvider"> jpyyProvider 项目</a></small>
+      <!-- ============ 555 专属配置 ============ -->
+      <div id="section555" class="source-section">
+        <div class="source-section-title">
+          <span class="icon">🎥</span> 555 电影配置
+        </div>
+
+        <!-- 555 域名 -->
+        <div class="form-group">
+          <label for="domain555">
+            555 资源站域名
+            <span class="optional">可选</span>
+          </label>
+          <input
+            type="text"
+            id="domain555"
+            placeholder="www.555zxdy.cc"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <span class="form-hint">
+            站点域名变更时可修改，留空使用默认 <code>www.555zxdy.cc</code>
           </span>
-        </label>
+        </div>
+
+        <!-- 555 分类 -->
+        <div class="form-group">
+          <label>
+            555 支持的类型
+            <span class="optional">可选</span>
+          </label>
+          <div class="checkbox-grid">
+            <label class="checkbox-item">
+              <input type="checkbox" class="cat555-cb" value="movie" checked />
+              <span>🎬 电影</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="cat555-cb" value="series" checked />
+              <span>📺 剧集</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="cat555-cb" value="anime" checked />
+              <span>🎨 动漫</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="cat555-cb" value="variety" checked />
+              <span>🎤 综艺</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="cat555-cb" value="short" checked />
+              <span>📱 短剧</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="cat555-cb" value="sports" checked />
+              <span>⚽ 体育</span>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" class="cat555-cb" value="new" checked />
+              <span>🆕 今日更新</span>
+            </label>
+          </div>
+          <span class="form-hint">
+            只显示勾选的分类，555 不支持搜索，只能通过目录浏览
+          </span>
+        </div>
       </div>
 
     </section>

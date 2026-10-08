@@ -1,8 +1,17 @@
-# 金牌影视 · Stremio Addon
+# 金牌影视 + 555 · Stremio Addon
 
-> 一个为 **Stremio** 打造的影视插件，对接「金牌影视」资源站。支持目录浏览、关键词搜索、元数据获取与流媒体播放，兼容站内 ID 与 IMDb ID 双格式。
+> 一个为 **Stremio** 打造的影视插件，对接「金牌影视」资源站（jpyy），并**实验性支持**「555 电影」站。支持目录浏览、关键词搜索、元数据获取与流媒体播放，兼容站内 ID 与 IMDb ID 双格式。
 
 基于 **Vercel Edge Functions** 部署，配合 **Upstash Redis** 实现跨实例缓存，全链路响应迅速、稳定、可扩展。
+
+> ⚠️ **关于 555 源**
+> 555 站点为**实验性支持**，不纳入长期维护。原因：
+> - 站点有反爬挑战（JS 暴力搜索），维护成本高
+> - 站点无搜索 API，仅能分类浏览
+> - 站点结构可能随时变更
+> - **后期可能随时删除该源**
+> 
+> 建议使用 555 源时**不要依赖其长期稳定性**。
 
 ---
 
@@ -12,12 +21,14 @@
 - [架构总览](#架构总览)
 - [项目结构](#项目结构)
 - [快速开始](#快速开始)
+- [配置页面](#配置页面)
 - [环境变量](#环境变量)
 - [接口文档](#接口文档)
 - [缓存策略](#缓存策略)
 - [ID 格式](#id-格式)
 - [域名动态追踪](#域名动态追踪)
 - [多语言 IMDb 匹配](#多语言-imdb-匹配)
+- [555 源说明](#555-源说明)
 - [调试与测试](#调试与测试)
 - [常见问题](#常见问题)
 - [技术栈](#技术栈)
@@ -29,12 +40,15 @@
 ## 核心特性
 
 - **完整功能** — 支持 `catalog`、`meta`、`stream`、`search` 四大接口，与 Stremio 官方规范对齐
+- **双源架构** — jpyy（主）+ 555（实验），用户可独立开关
 - **双 ID 体系** — 同时兼容站内 ID (`jp146932`) 与 IMDb ID (`tt0109830`)，与其他 Addon 无缝协作
 - **多语言 IMDb 匹配** — 通过 TMDB 别名搜索（含中/英/日/韩/俄/印地等），解决英文原名匹配不到中文资源的问题
-- **剧集精解** — 正确处理「每季独立条目」的资源站数据模型，剧集列表、分集播放准确无误
-- **三级缓存** — 内存 → Upstash Redis → Vercel CDN，有效降低源站压力，提升响应速度
+- **剧集精解** — 正确处理「每季独立条目」的资源站数据模型
+- **三级缓存** — 内存 → Upstash Redis → Vercel CDN，有效降低源站压力
 - **Redis 冷却降级** — Redis 慢响应时自动降级到内存缓存，避免长时间等待
-- **官方域名 API** — 通过 `jpyy.com` 的官方接口 `getDomain` 直接获取最新域名列表，比 HTML 解析更可靠
+- **官方域名 API** — 通过 `jpyy.com` 的官方接口 `getDomain` 直接获取最新域名列表
+- **JS 挑战求解** — 自动求解 555 站点的 MD5 暴力搜索挑战
+- **配置化开关** — 源开关、类型筛选、Stream 开关全部通过 URL 参数控制
 - **零依赖部署** — 无第三方依赖，仅用原生 `fetch`，一键部署到 Vercel
 
 ---
@@ -58,12 +72,12 @@
 │              Vercel Edge Function                     │
 │  ┌──────────────────────────────────────────────┐    │
 │  │              Handler 层                       │    │
-│  │   路由解析 · 请求分发 · 响应封装               │    │
+│  │   路由解析 · 源分发 · 响应封装                 │    │
 │  └──────────────────────────────────────────────┘    │
-│  ┌──────────────────────────────────────────────┐    │
-│  │              Adapter 层                       │    │
-│  │   站点请求 · RSC 解析 · 签名生成               │    │
-│  └──────────────────────────────────────────────┘    │
+│  ┌──────────────────────┬───────────────────────┐    │
+│  │   Adapter (jpyy)     │   Adapter (555)       │    │
+│  │   站点请求 · RSC 解析 │   HTML 解析 · 挑战求解│    │
+│  └──────────────────────┴───────────────────────┘    │
 │  ┌──────────────────────────────────────────────┐    │
 │  │             Resolver 层                       │    │
 │  │   IMDb 解析 · 多语言匹配 · 缩略图获取           │    │
@@ -78,11 +92,13 @@
 │  └──────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────┘
                         │
-                        ▼
-┌──────────────────────────────────────────────────────┐
-│              资源站 (0996zp.com)                       │
-│        域名由 jpyy.com 官方 API 动态发现               │
-└──────────────────────────────────────────────────────┘
+            ┌───────────┴───────────┐
+            ▼                       ▼
+┌──────────────────────┐  ┌──────────────────────┐
+│   jpyy 资源站         │  │   555 资源站          │
+│   0996zp.com         │  │   555zxdy.cc         │
+│  （域名动态追踪）      │  │  （用户配置域名）      │
+└──────────────────────┘  └──────────────────────┘
 ```
 
 ---
@@ -98,18 +114,21 @@ jpyyVecel/
 │   ├── configure.css
 │   └── configure.js
 ├── src/
-│   ├── handler.js            # 主处理逻辑（路由分发）
-│   ├── adapter.js            # 站点适配器（搜索/详情/剧集/流媒体）
-│   ├── manifest.js           # Stremio 清单（支持动态生成）
+│   ├── handler.js            # 主处理逻辑（路由分发 + 源分发）
+│   ├── adapter.js            # jpyy 站点适配器
+│   ├── adapter-555.js        # 555 站点适配器（实验性）
+│   ├── parser-555.js         # 555 HTML 解析器（纯函数）
+│   ├── challenge-555.js      # 555 JS 挑战求解器
+│   ├── manifest.js           # Stremio 清单（支持多源动态生成）
 │   ├── config.js             # 全局配置（支持用户配置覆盖）
 │   ├── cache.js              # 多级缓存（内存 + Redis + 冷却降级）
-│   ├── domain-resolver.js    # 域名动态追踪（API + HTML 三层策略）
-│   ├── imdb-resolver.js      # IMDb → 站内 ID 解析（多语言匹配）
+│   ├── domain-resolver.js    # jpyy 域名动态追踪
+│   ├── imdb-resolver.js      # IMDb → jpyy vodId 解析
 │   ├── tmdb.js               # TMDB / Cinemeta 集成
 │   ├── rsc.js                # Next.js RSC 流解析
 │   ├── http.js               # HTTP 客户端（超时/重试/域名切换）
 │   └── helper.js             # 工具函数（Hash / Utils）
-├── test.js                   # 测试脚本
+├── health.js                 # 完整测试脚本（jpyy + 555）
 ├── vercel.json               # Vercel 路由配置
 ├── package.json
 └── README.md
@@ -207,15 +226,18 @@ npx vercel --prod
 https://stremio.yourdomain.com/configure
 ```
 
-### 可配置项
+### 配置项总览
 
-| 配置项 | 键 | 默认值 | 说明 |
-|-------|-----|--------|------|
-| **资源站域名** | `bd` | `0996zp.com` | 高级用户可自定义 |
-| **TMDB API Key** | `tk` | 内置 | 防止限流，可选 |
-| **支持类型** | `cats` | 全部 5 类 | 电影/电视剧/综艺/动漫/短剧 |
-| **启用 IMDb 解析** | `imdb` | `true` | 支持 tt 格式 |
-|**启用 stream **| `stream` | `true` | 防止id校验无法播放，配合jpyyProvider使用|
+| 分组 | 配置项 | 键 | 默认值 | 说明 |
+|------|-------|-----|--------|------|
+| **源开关** | 启用的影视源 | `srcs` | `['jpyy', '555']` | 至少选一个 |
+| **jpyy** | 资源站域名 | `bd` | `0996zp.com` | 高级用户可自定义 |
+| **jpyy** | TMDB API Key | `tk` | 内置 | 防止限流，可选 |
+| **jpyy** | 支持类型 | `cats` | 全部 5 类 | 电影/电视剧/综艺/动漫/短剧 |
+| **jpyy** | 启用 IMDb 解析 | `imdb` | `true` | 支持 tt 格式 |
+| **jpyy** | 启用 Stream | `stream` | `true` | 关闭后仅提供目录和元数据 |
+| **555** | 555 域名 | `d555` | `www.555zxdy.cc` | 站点域名变更时可修改 |
+| **555** | 555 分类 | `c555` | 全部 7 类 | 电影/剧集/动漫/综艺/短剧/体育/今日更新 |
 
 ### 配置传递方式
 
@@ -228,81 +250,29 @@ https://stremio.yourdomain.com/configure
 
 ### 配置示例
 
-**只启用电影和电视剧**：
+**只启用 jpyy（关闭 555）**：
 
 ```javascript
-{ cats: ['movie', 'series'] }
+{ srcs: ['jpyy'] }
 ```
 
-**自定义域名**：
+**只启用 555**：
 
 ```javascript
-{ bd: 'new-domain.com' }
+{ srcs: ['555'] }
 ```
 
----
-
-## 修改默认域名
-
-本项目默认站点域名为 `0996zp.com`。如需更换，请**同步修改**以下 3 处：
-
-### 1. 后端默认值
-
-**`src/config.js`**（第 51-56 行附近）：
+**关闭 Stream 功能**：
 
 ```javascript
-BASE_DOMAIN: user.bd || 'new-domain.com',
-FALLBACK_DOMAINS: [
-  user.bd || 'new-domain.com',
-  'www.' + (user.bd || 'new-domain.com'),
-  'x8kb9k8.com',
-].filter(Boolean),
+{ stream: false }
 ```
 
-### 2. 前端配置页
-
-**`public/configure.js`**（第 21 行附近）：
+**自定义 jpyy 域名 + 只启用电影和电视剧**：
 
 ```javascript
-const DEFAULTS = {
-  baseDomain: 'new-domain.com',   // ⚠️ 必须与 src/config.js 一致
-  enableImdb: true,
-};
+{ bd: 'new-domain.com', cats: ['movie', 'series'] }
 ```
-
-### 3. 文档
-
-**`README.md`**：全局搜索 `0996zp.com` 并替换为 `new-domain.com`。
-
-### 为什么需要三处同步？
-
-| 位置 | 作用 |
-|------|------|
-| `src/config.js` | 后端兜底域名（API 全部失败时使用） |
-| `public/configure.js` | 前端 placeholder，判断"是否与默认相同" |
-| `README.md` | 用户文档示例 |
-
-### 使用provider的要关注provider项目是否更新domain
-
-## 获取域名的方法
-[获取最新域名](https://fofa.info/result?qbase64=Ym9keT0ib2JzLjM2ODhiYWlodW8uY29tL3VwbG9hZC9zaXRlX2ljbyI%3D)
-
-实现方式是通过fofa 查找`body="obs.3688baihuo.com/upload/site_ico"` 。
-
-另外一是方式是发现了一个api,可以通过`domainFetcherJPYY.js`来获取，暂时未在项目里正式使用。
-
-### 优先级说明
-
-```
-用户自定义域名（?cfg=bd=xxx）
-    ↓ 优先级最高
-官方 API 动态发现域名
-    ↓ 优先级中
-硬编码默认域名（本处配置）
-    ↓ 优先级最低
-```
-
-**大多数情况下，官方 API 会自动获取最新域名**，硬编码的默认值仅作为**最终兜底**。
 
 ---
 
@@ -319,7 +289,7 @@ const DEFAULTS = {
 
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
-| `BASE_DOMAIN` | `0996zp.com` | 资源站默认域名 |
+| `BASE_DOMAIN` | `0996zp.com` | jpyy 站点默认域名 |
 | `DISCOVERY_URL` | `https://jpyy.com` | 域名发现源 |
 | `TMDB_API_KEY` | 内置 | TMDB API 密钥 |
 
@@ -335,17 +305,27 @@ const DEFAULTS = {
 GET /manifest.json
 ```
 
-返回 Addon 清单，声明支持的资源、类型和目录。
+返回 Addon 清单。**目录数量取决于配置**：
 
-**支持目录**（可通过配置页面动态调整）：
+| 源 | Catalog ID | 类型 | 名称 |
+|----|-----------|------|------|
+| **jpyy** | `jinpai-movie` / `movie` | movie | jpyy - 电影 |
+| **jpyy** | `jinpai-series` / `series` | series | jpyy - 电视剧 |
+| **jpyy** | `jinpai-variety` / `variety` | series | jpyy - 综艺 |
+| **jpyy** | `jinpai-anime` / `anime` | series | jpyy - 动漫 |
+| **jpyy** | `jinpai-short` / `short` | series | jpyy - 短剧 |
+| **555** | `555-movie` | movie | 555 - 电影 |
+| **555** | `555-series` | series | 555 - 剧集 |
+| **555** | `555-anime` | series | 555 - 动漫 |
+| **555** | `555-variety` | series | 555 - 综艺 |
+| **555** | `555-short` | series | 555 - 短剧 |
+| **555** | `555-sports` | series | 555 - 体育 |
+| **555** | `555-new` | series | 555 - 今日更新 |
 
-| Catalog ID | 类型 | 名称 |
-|------------|------|------|
-| `jinpai-movie` / `movie` | movie | 电影 |
-| `jinpai-series` / `series` | series | 电视剧 |
-| `jinpai-variety` / `variety` | series | 综艺 |
-| `jinpai-anime` / `anime` | series | 动漫 |
-| `jinpai-short` / `short` | series | 短剧 |
+**ID 前缀**：
+
+- 启用 jpyy → `['tt', 'jp']`
+- 启用 555 → `['dy555']`
 
 ### Catalog · 浏览
 
@@ -353,11 +333,7 @@ GET /manifest.json
 GET /catalog/:type/:id.json?skip=0
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `type` | `movie` 或 `series` |
-| `id` | 目录 ID（如 `jinpai-movie`） |
-| `skip` | 分页偏移量（每页 48 条） |
+**注意**：555 源**无分页**，`skip > 0` 时返回空数组。
 
 ### Catalog · 搜索
 
@@ -365,7 +341,7 @@ GET /catalog/:type/:id.json?skip=0
 GET /catalog/:type/:id/search=:query.json
 ```
 
-例如：`/catalog/movie/jinpai-movie/search=阿甘.json`
+**注意**：555 源**无搜索**，只有 jpyy 支持。
 
 ### Meta
 
@@ -373,43 +349,14 @@ GET /catalog/:type/:id/search=:query.json
 GET /meta/:type/:id.json
 ```
 
-| ID 格式 | 说明 | 示例 |
-|---------|------|------|
-| `jpXXXXX` | 站内电影 | `jp146870` |
-| `jpXXXXX:S:E` | 站内剧集 | `jp146932:1:1` |
-| `ttXXXXXXX` | IMDb 电影 | `tt0109830` |
-| `ttXXXXXXX:S:E` | IMDb 剧集 | `tt0455275:4:5` |
-
-**响应关键字段**：
-
-```json
-{
-  "meta": {
-    "id": "jp146932",
-    "type": "series",
-    "name": "一瓯春",
-    "poster": "https://...",
-    "background": "https://...",
-    "description": "...",
-    "year": "2026",
-    "releaseInfo": "2026-",
-    "imdbRating": 5.9,
-    "cast": ["娜塔莉·伊曼纽尔", "克莱尔·弗兰妮", "本·库拉"],
-    "director": "彼得·休伊特",
-    "genres": ["惊悚"],
-    "videos": [
-      {
-        "id": "jp146932:1:1",
-        "season": 1,
-        "episode": 1,
-        "title": "第1集",
-        "thumbnail": "https://image.tmdb.org/...",
-        "released": "2026-09-21T..."
-      }
-    ]
-  }
-}
-```
+| ID 格式 | 来源 | 说明 | 示例 |
+|---------|------|------|------|
+| `jpXXXXX` | jpyy | 站内电影 | `jp146870` |
+| `jpXXXXX:S:E` | jpyy | 站内剧集 | `jp146932:1:1` |
+| `ttXXXXXXX` | jpyy | IMDb 电影 | `tt0109830` |
+| `ttXXXXXXX:S:E` | jpyy | IMDb 剧集 | `tt0455275:4:5` |
+| `dy555XXXXX` | 555 | 555 电影 | `dy55512345` |
+| `dy555XXXXX:S:E` | 555 | 555 剧集 | `dy55512345:1:1` |
 
 ### Stream
 
@@ -417,16 +364,21 @@ GET /meta/:type/:id.json
 GET /stream/:type/:id.json
 ```
 
-返回可用的流媒体列表（含多清晰度 HLS 地址）。
+**555 源特点**：
+- 多源聚合（每个线路返回一个 stream）
+- `stream.name` = 影片名称
+- `stream.title` = 线路名称（如"线路1"）
 
 ### 调试接口
 
 | 端点 | 说明 |
 |------|------|
-| `/debug/domains` | 查看当前域名状态 |
-| `/debug/domains?action=clear` | 清空域名缓存 |
-| `/debug/domains?action=api` | 测试官方域名 API |
-| `/debug/cache` | 查看缓存统计 |
+| `/debug/domains` | jpyy 域名状态 |
+| `/debug/domains?action=clear` | 清空 jpyy 域名缓存 |
+| `/debug/domains?action=api` | 测试 jpyy 官方域名 API |
+| `/debug/cache` | 缓存统计 |
+| `/debug/555` | 555 站点状态 |
+| `/debug/555?action=clear` | 清空 555 挑战 cookie 缓存 |
 
 ---
 
@@ -447,71 +399,56 @@ GET /stream/:type/:id.json
 | **Catalog** | 60s | 5 分钟 | 5 分钟 |
 | **Meta** | 60s | 30 分钟 | 10 分钟 |
 | **Episodes** | 60s | 30 分钟 | - |
+| **VodName** | - | 7 天 | - |
 | **Stream** | 60s | 3 分钟 | 1 分钟 |
 | **Search** | 60s | 10 分钟 | 5 分钟 |
 | **IMDb 映射** | - | 7 天 | - |
 | **TMDB 元数据** | - | 7 天 | - |
 | **TMDB 缩略图** | - | 7 天 | - |
 | **当前域名** | - | 7 天 | - |
+| **555 Catalog** | 60s | 5 分钟 | 5 分钟 |
+| **555 Detail** | 60s | 30 分钟 | 10 分钟 |
+| **555 Episodes** | 60s | 30 分钟 | - |
+| **555 Stream** | 60s | 3 分钟 | 1 分钟 |
+| **555 挑战 cookie** | - | 400s | - |
 
 ### Redis 冷却降级机制
 
-当 Redis 连续 3 次响应超过 500ms 或失败时：
-
-```
-[Cache] ⚠️ Redis 失败 (802ms × 3)，冷却 60 秒
-```
-
-进入 **60 秒冷却期**，期间：
-- 跳过 Redis 读取/写入
-- 仅使用内存缓存
-- 冷却结束后自动恢复
-
-**适用场景**：本地 dev 环境（Redis 延迟高）或 Upstash 网络抖动。
+当 Redis 连续 3 次响应超过 500ms 或失败时，进入 **60 秒冷却期**，期间仅使用内存缓存。
 
 ---
 
 ## ID 格式
 
-本项目同时支持两种 ID 体系，**对外优先使用 IMDb ID**，站内 ID 作为降级方案。
-
-### 站内 ID
-
-直接使用资源站的 `vodId`：
+### jpyy 源
 
 ```
 jp146870           → 电影
 jp146932:1:1       → 剧集：第 1 季第 1 集
+tt0109830          → 阿甘正传（IMDb 电影）
+tt0455275:4:5      → 越狱 第 4 季第 5 集（IMDb 剧集）
 ```
 
-### IMDb ID
+### 555 源
 
-通过 TMDB / Cinemeta 解析为站内 ID：
-
-```
-tt0109830          → 阿甘正传
-tt0455275:4:5      → 越狱 第 4 季第 5 集
-```
-
-**转换流程**：
+555 源使用 `dy555` 前缀（**不含冒号**）：
 
 ```
-tt13016388:1:1
-    ↓ 查询 TMDB 获取所有别名（中/英/日/韩/俄等）
-    ↓ 逐个搜索站点，合并去重
-    ↓ 用所有候选标题匹配结果
-    ↓ 得到「三体第一季（国语）」vodId
-    ↓ 查询详情找到第 1 集 nid
-    ↓ 返回流媒体地址
+dy55512345         → 电影
+dy55512345:1:1     → 剧集：第 1 季第 1 集（season 恒为 1）
 ```
+
+> **为什么用 `dy555` 而不是 `555:`？**
+> 
+> Stremio 客户端用 `:` 识别 season/episode 分隔符。若用 `555:` 前缀，则 `555:12345:1:1` 会被解析为 `baseId=555, season=12345, episode=1`，错乱。
 
 ---
 
 ## 域名动态追踪
 
-资源站域名可能随时变更。本 Addon 通过**三层策略**保持服务可用：
+### jpyy 源
 
-### 追踪机制
+**三层策略**：
 
 ```
 请求失败
@@ -521,8 +458,7 @@ tt13016388:1:1
 ② Redis 缓存（跨实例，7 天 TTL）
     ↓ 未命中
 ③ jpyy.com 官方 API 获取域名列表
-    │   GET /api/mw-movie/anonymous/website/get/domain
-    │       ?websiteSeoId=86
+    │   GET /api/mw-movie/anonymous/website/get/domain?websiteSeoId=86
     │   Headers: sign, t, deviceId, client-type
     ↓ 失败
 ④ jpyy.com HTML 提取（兜底）
@@ -530,29 +466,30 @@ tt13016388:1:1
 ⑤ 硬编码备用域名（最终兜底）
 ```
 
-### 官方 API 签名算法
+**API 签名算法**：
 
 ```
 sign = SHA1(MD5(sorted_params + "&key=" + SIGN_KEY + "&t=" + t))
-
-其中：
-  sorted_params = 参数按 key 升序排列后拼接
-  SIGN_KEY      = cb808529bae6b6be45ecfab29a4889bc
-  t             = 毫秒时间戳
 ```
 
-### 并发锁
+### 555 源
 
-使用 Redis 锁防止多实例同时探测：
+**域名来源**：
 
 ```
-domain:probe:lock    TTL 60 秒
+① 用户配置 d555（最高优先级，失败不切换）
+    ↓ 未配置
+② 内存记录的成功域名（实例级）
+    ↓ 未命中
+③ 硬编码默认域名 555zxdy.cc
+    ↓ 失败
+④ 硬编码备用域名列表
 ```
 
-### 手动清空
+**手动清空**：
 
 ```bash
-curl "https://your-domain.vercel.app/debug/domains?action=clear"
+curl "https://your-domain.vercel.app/debug/555?action=clear"
 ```
 
 ---
@@ -586,7 +523,68 @@ TMDB 返回的标题往往是**英文原名**（如 `3 Body Problem`），而站
 [IMDb→Vod] ✅ Resolved: tt13016388 → vodId=103388
 ```
 
-**匹配成功**：`3 Body Problem` → `三体第一季（国语）`
+---
+
+## 555 源说明
+
+> ⚠️ **555 源为实验性支持，不纳入长期维护，后期可能随时删除。**
+
+### 支持的功能
+
+| 功能 | 状态 |
+|------|------|
+| 分类浏览 | ✅ |
+| 详情解析 | ✅ |
+| 剧集列表（多源） | ✅ |
+| 播放地址解析 | ✅ |
+| 多源 Stream 聚合 | ✅ |
+| JS 挑战自动求解 | ✅ |
+| 搜索 | ❌（站点验证码限制） |
+| IMDb 映射 | ❌（依赖搜索） |
+| 域名动态追踪 | ❌（用硬编码 + 用户配置） |
+
+### 技术特点
+
+**1. 多源聚合**
+
+555 站点的同一影片有多个线路（"线路1"、"线路2"、...）。每个线路有独立的剧集列表。本 Addon：
+
+- `parseEpisodes555` 返回**按源分组**结构
+- `mergeEpisodesFromSources` 合并成"按集分组、每集带所有源"
+- Stream 流程遍历所有源，每个源生成一个 stream
+
+**2. JS 挑战求解**
+
+555 站点有 JS 反爬挑战（MD5 暴力搜索）：
+
+```javascript
+var C="5971483.31c722db25b288157883b1a012d3ada5",D=3,P="000";
+// 暴力搜索 n，使 md5(C + ":" + n).slice(0, D) === P
+```
+
+求解器：
+- 纯 JS 实现，无依赖
+- D=3 时耗时 5-60ms（迭代约 4000 次）
+- 解出的 cookie 存入 Redis（TTL 400s）
+
+**3. 缓存隔离**
+
+所有 555 缓存 key 带 `555:` 前缀，与 jpyy 完全隔离。
+
+### 未实现功能的原因
+
+| 功能 | 原因 |
+|------|------|
+| 搜索 | 受限于苹果 CMS 搜索验证码（`verify_check`），需要已通过验证的 `PHPSESSID` |
+| IMDb 映射 | 依赖搜索功能 |
+| 采集 API | 站点管理员已关闭 |
+| 域名动态追踪 | 用户决定用硬编码 + 用户配置 |
+
+### 后期规划
+
+- 保持现状，**不主动维护**
+- 如果站点结构变更导致解析失败，**可能直接删除该源**
+- 用户如遇到 555 源问题，建议**关闭该源**，使用 jpyy 源
 
 ---
 
@@ -603,13 +601,13 @@ npx vercel dev
 
 ```bash
 # 默认测本地
-node test.js
+node health.js
 
 # 测线上
-BASE_URL=https://wangqifei0x00.eu.org node test.js
+BASE_URL=https://wangqifei0x00.eu.org node health.js
 
 # 跳过缓存测试
-SKIP_CACHE_TEST=1 node test.js
+SKIP_CACHE_TEST=1 node health.js
 ```
 
 ### 查看日志
@@ -655,7 +653,7 @@ x-vercel-cache: HIT
 
 ### Q1：Stremio 中搜索无结果？
 
-确认 `manifest.js` 的 `catalogs` 中已声明 `extra` 字段：
+确认 `manifest.js` 的 `catalogs` 中已声明 `extra` 字段（jpyy 需要）：
 
 ```javascript
 {
@@ -667,6 +665,8 @@ x-vercel-cache: HIT
   ],
 }
 ```
+
+555 源无搜索，`extra` 只保留 `skip`。
 
 ### Q2：剧集详情页只显示 S1E1？
 
@@ -696,7 +696,7 @@ curl -I "https://your-domain/catalog/movie/movie.json" | grep -i cache
 - 检查 `jsonResponse` 是否设置了 `Cache-Control`
 - 确认使用自定义域名（`*.vercel.app` 默认不缓存）
 
-### Q4：站点不可达（Connect Timeout）？
+### Q4：jpyy 站点不可达（Connect Timeout）？
 
 可能域名被墙。切换到备用域名：
 
@@ -708,21 +708,53 @@ curl "https://your-domain/debug/domains" | jq .current
 curl "https://your-domain/debug/domains?action=clear"
 ```
 
-### Q5：官方域名 API 测试
+### Q5：555 源解析失败？
+
+**排查步骤**：
 
 ```bash
-curl "https://your-domain/debug/domains?action=api" | jq .
+# 1. 检查 555 状态
+curl "https://your-domain/debug/555" | jq .
+
+# 2. 清空挑战 cookie 缓存
+curl "https://your-domain/debug/555?action=clear"
+
+# 3. 手动访问站点验证
+# 浏览器打开 https://www.555zxdy.cc
 ```
 
-**预期**：返回域名列表 + 签名信息。
+**如果站点结构变更** → 可能需要在 `parser-555.js` 中更新正则。
 
-### Q6：如何降低 Redis 用量？
+**如果站点长期不可达** → 建议在配置页面关闭 555 源。
+
+### Q6：如何关闭 555 源？
+
+**方法 1**：配置页面
+
+访问 `/configure`，取消勾选「555 电影」，生成安装链接。
+
+**方法 2**：URL 参数
+
+```
+https://your-domain/manifest.json?cfg=eyJzcmNzIjpbImpweXkiXX0
+```
+
+（`eyJzcmNzIjpbImpweXkiXX0` = `{"srcs":["jpyy"]}`）
+
+**方法 3**：修改 `config.js` 默认值
+
+```javascript
+// 把默认源改为只有 jpyy
+enabledSources = ['jpyy'];
+```
+
+### Q7：如何降低 Redis 用量？
 
 - 增大缓存 TTL（如 Catalog 从 5 分钟改为 10 分钟）
 - 减少写入频次（仅缓存成功响应）
 - 升级 Upstash 套餐（免费额度 10k 命令/天）
 
-### Q7：Vercel 返回 403 / Security Checkpoint？
+### Q8：Vercel 返回 403 / Security Checkpoint？
 
 **原因**：短时间内大量请求触发 Vercel 安全防护。
 
@@ -732,12 +764,6 @@ curl "https://your-domain/debug/domains?action=api" | jq .
 - 请求时带完整浏览器头
 
 **Stremio 客户端不会被拦**（有正常的 User-Agent）。
-
-### Q8：本地 dev 缓存不生效？
-
-**原因**：`vercel dev` 每次请求可能创建新实例，内存缓存失效。
-
-**说明**：这是 dev 环境的固有限制，**不代表生产环境**。
 
 ---
 
@@ -773,13 +799,21 @@ curl "https://your-domain/debug/domains?action=api" | jq .
 阶段 4 · 性能优化
   ├─ CDN 缓存
   ├─ Episodes 独立缓存
-  ├─ 多语言 IMDb 匹配
-  └─ Catalog 简写 ID 兼容
+  ├─ VodName 顺带缓存
+  └─ 多语言 IMDb 匹配
 
 阶段 5 · 用户体验
-  ├─ 配置页面（bd/tk/cats/imdb）
+  ├─ 配置页面
   ├─ 官方域名 API
-  └─ 类型筛选
+  ├─ 类型筛选
+  ├─ Stream 开关
+  └─ Device ID 动态生成
+
+阶段 6 · 多源扩展（实验性）
+  ├─ 555 源支持
+  ├─ JS 挑战求解
+  ├─ 多源 Stream 聚合
+  └─ 源开关配置
 ```
 
 ---
@@ -787,6 +821,10 @@ curl "https://your-domain/debug/domains?action=api" | jq .
 ## 贡献
 
 欢迎提交 Issue 与 Pull Request。若本项目对你有帮助，请给一个 ⭐️ Star。
+
+**注意**：
+- jpyy 源为主要维护对象
+- 555 源为**实验性**，不接受复杂功能新增，**可能随时删除**
 
 ---
 
