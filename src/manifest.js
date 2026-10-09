@@ -165,7 +165,7 @@ export function generateManifest(enabledCategories, options = {}) {
   return {
     id: 'com.local.jinpai',          // ⚠️ 保持不变，避免已安装用户需重新安装
     version: '1.1.0',
-    name: nameSuffix,
+    name: nameSuffix,               // 动态拼接
     description: `${descParts.join('；')}。仅供学习、演示使用！`,
     logo: 'https://obs.3688baihuo.com/upload/site_ico/20260531-1/92da5ddc802c076de628be1b70e6fb90_180x180.png',
 
