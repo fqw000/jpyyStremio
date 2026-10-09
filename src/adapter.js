@@ -249,7 +249,24 @@ export async function fetchEpisodes(vodId) {
   const domain = getBaseDomain();
   const url = `https://${domain}/detail/${vodId}?_rsc=xsbs6`;
 
-  const text = await getText(url, { 'RSC': '1', 'Referer': `https://${domain}/` });
+  let text;
+  try {
+    text = await getText(url, { 'RSC': '1', 'Referer': `https://${domain}/` });
+  } catch (err) {
+    if (err.message.includes('403') || err.name === 'AbortError') {
+      console.log(`[Adapter] ⚠️ fetchEpisodes 域名失败 (${domain})，尝试切换...`);
+      const newDomain = await markDomainFailed(domain);
+      if (newDomain && newDomain !== domain) {
+        const newUrl = `https://${newDomain}/detail/${vodId}?_rsc=xsbs6`;
+        text = await getText(newUrl, { 'RSC': '1', 'Referer': `https://${newDomain}/` });
+      } else {
+        throw err;
+      }
+    } else {
+      throw err;
+    }
+  }
+
   const detail = parseDetail(text);
   if (!detail) {
     console.warn(`[Adapter] ⚠️ parseDetail 返回 null`);
@@ -350,11 +367,32 @@ export async function searchVideos(keyword, page = 1, pageSize = 24) {
   const url = `https://${domain}/api/mw-movie/anonymous/video/searchByWord?keyword=${encodedKeyword}&pageNum=${page}&pageSize=${pageSize}&type=false`;
 
   try {
-    const data = await getJson(url, {
-      'Referer': `https://${domain}/`,
-      'sign': sign,
-      't': String(t),
-    });
+    // ===== 请求（带域名切换）=====
+    let data;
+    try {
+      data = await getJson(url, {
+        'Referer': `https://${domain}/`,
+        'sign': sign,
+        't': String(t),
+      });
+    } catch (err) {
+      if (err.message.includes('403') || err.name === 'AbortError') {
+        console.log(`[Adapter] ⚠️ searchVideos 域名失败 (${domain})，尝试切换...`);
+        const newDomain = await markDomainFailed(domain);
+        if (newDomain && newDomain !== domain) {
+          const newUrl = `https://${newDomain}/api/mw-movie/anonymous/video/searchByWord?keyword=${encodedKeyword}&pageNum=${page}&pageSize=${pageSize}&type=false`;
+          data = await getJson(newUrl, {
+            'Referer': `https://${newDomain}/`,
+            'sign': sign,      // 签名与域名无关，保持不变
+            't': String(t),    // t 与 sign 配对，保持不变
+          });
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
 
     if (!data || data.code !== 200) {
       console.error(`[Adapter] ❌ Search API error: code=${data?.code}`);

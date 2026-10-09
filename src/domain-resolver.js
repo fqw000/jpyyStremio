@@ -129,7 +129,7 @@ export async function markDomainFailed(failedDomain, logger = null) {
   console.log(`[Domain] ⚠️ ${failedDomain} 失败 (${stat.failCount} 次)`);
 
   if (failedDomain === currentDomain) {
-    return await probeAndUpdate(logger);
+    return await probeAndUpdate(logger, true);   // ← force=true
   }
 
   return currentDomain;
@@ -145,7 +145,7 @@ export async function markDomainFailed(failedDomain, logger = null) {
  * @param {LogCollector} logger
  * @returns {Promise<string>}
  */
-export async function probeAndUpdate(logger = null) {
+export async function probeAndUpdate(logger = null, force = false) {
   // ===== 0. 用户配置了域名 → 跳过所有探测 =====
   const userDomain = getUserDomain();
   if (userDomain) {
@@ -173,23 +173,29 @@ export async function probeAndUpdate(logger = null) {
   await setCache(REDIS_LOCK_KEY, { ts: Date.now() }, 60);
 
   // ===== 2. 检查 Redis 缓存 =====
-  try {
-    const redisCached = await getCache(REDIS_KEY);
-    if (redisCached && redisCached.domain && redisCached.ts) {
-      const age = Date.now() - redisCached.ts;
-      if (age < PROBE_TTL) {
-        currentDomain = redisCached.domain;
-        lastProbeAt = redisCached.ts;
-        console.log(`[Domain] ✅ Redis 缓存命中: ${currentDomain} (age=${Math.round(age / 3600000)}h)`);
-        return currentDomain;
+  // ===== 2. 检查 Redis 缓存 =====
+  // force=true 时跳过（已确认当前域名失效，缓存不可信）
+  if (!force) {
+    try {
+      const redisCached = await getCache(REDIS_KEY);
+      if (redisCached && redisCached.domain && redisCached.ts) {
+        const age = Date.now() - redisCached.ts;
+        if (age < PROBE_TTL) {
+          currentDomain = redisCached.domain;
+          lastProbeAt = redisCached.ts;
+          console.log(`[Domain] ✅ Redis 缓存命中: ${currentDomain} (age=${Math.round(age / 3600000)}h)`);
+          return currentDomain;
+        }
       }
+    } catch (err) {
+      console.warn(`[Domain] Redis 读取失败: ${err.message}`);
     }
-  } catch (err) {
-    console.warn(`[Domain] Redis 读取失败: ${err.message}`);
+  } else {
+    console.log(`[Domain] 🔄 force=true，跳过 Redis 缓存，强制重新探测`);
   }
 
   // ===== 3. 检查内存缓存 =====
-  if (currentDomain && (Date.now() - lastProbeAt) < PROBE_TTL) {
+  if (!force && currentDomain && (Date.now() - lastProbeAt) < PROBE_TTL) {
     console.log(`[Domain] ✅ 内存缓存有效，跳过探测`);
     return currentDomain;
   }
@@ -205,23 +211,7 @@ export async function probeAndUpdate(logger = null) {
   console.log(`[Domain] 🔍 开始探测可用域名...`);
 
   try {
-    // ===== 4. 【新增】通过官方 API 获取域名列表 =====
-    const apiDomains = await fetchDomainsFromApi(logger);
-
-    if (apiDomains && apiDomains.length > 0) {
-      // 依次测试每个域名
-      for (const domain of apiDomains) {
-        if (await probeDomain(domain, logger)) {
-          currentDomain = domain;
-          lastProbeAt = Date.now();
-          await saveToRedis(domain);
-          console.log(`[Domain] ✅ API 探测成功: ${domain}`);
-          return domain;
-        }
-      }
-    }
-
-    // ===== 5. 兜底：依次探测本地候选域名 =====
+    // ===== 4. 并行探测本地候选域名（优先，省一次 API 请求）=====
     const candidates = [
       CONFIG.BASE_DOMAIN,
       ...(CONFIG.FALLBACK_DOMAINS || []),
@@ -229,14 +219,35 @@ export async function probeAndUpdate(logger = null) {
 
     const uniqueCandidates = [...new Set(candidates)];
 
-    for (const domain of uniqueCandidates) {
-      if (await probeDomain(domain, logger)) {
-        currentDomain = domain;
+    if (uniqueCandidates.length > 0) {
+      console.log(`[Domain] 🚀 并行探测 ${uniqueCandidates.length} 个本地候选（取最先成功）...`);
+      const localOk = await probeFirstSuccess(uniqueCandidates, logger);
+
+      if (localOk) {
+        currentDomain = localOk;
         lastProbeAt = Date.now();
-        await saveToRedis(domain);
-        console.log(`[Domain] ✅ 本地候选成功: ${domain}`);
-        return domain;
+        await saveToRedis(localOk);
+        console.log(`[Domain] ✅ 本地候选成功: ${localOk}`);
+        return localOk;
       }
+      console.log(`[Domain] ⚠️ 本地候选 ${uniqueCandidates.length} 个域名全部失败`);
+    }
+
+    // ===== 5. 本地全失败，通过官方 API 获取域名列表 =====
+    const apiDomains = await fetchDomainsFromApi(logger);
+
+    if (apiDomains && apiDomains.length > 0) {
+      console.log(`[Domain] 🚀 并行探测 ${apiDomains.length} 个 API 域名（取最先成功）...`);
+      const apiOk = await probeFirstSuccess(apiDomains, logger);
+
+      if (apiOk) {
+        currentDomain = apiOk;
+        lastProbeAt = Date.now();
+        await saveToRedis(apiOk);
+        console.log(`[Domain] ✅ API 探测成功: ${apiOk}`);
+        return apiOk;
+      }
+      console.log(`[Domain] ⚠️ API 返回的 ${apiDomains.length} 个域名全部失败`);
     }
 
     // ===== 6. 最终兜底：jpyy.com HTML 提取 =====
@@ -375,25 +386,34 @@ async function fetchDomainsFromApi(logger = null) {
   }
 }
 
-// ==========================================
-// 探测单个域名
-// ==========================================
-
+/**
+ * 探测单个域名是否可用
+ *
+ * 判定标准（避免 HEAD/重定向误判）：
+ *   1. GET 请求真实业务路径（分类页第一页），而非首页
+ *   2. 跟随重定向（307 → 真实目的地）
+ *   3. 只认 HTTP 200
+ *
+ * 不读响应体，只取 status，保持轻量。
+ */
 async function probeDomain(domain, logger) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
 
-    const resp = await fetch(`https://${domain}/`, {
-      method: 'HEAD',
-      headers: DEFAULT_HEADERS,
+    const resp = await fetch(`https://${domain}/vod/show/id/1/page/1`, {
+      method: 'GET',
+      headers: {
+        ...DEFAULT_HEADERS,
+        'RSC': '1',
+      },
       signal: controller.signal,
-      redirect: 'manual',
+      redirect: 'follow',
     });
     clearTimeout(timer);
 
     const status = resp.status;
-    const alive = [200, 301, 302, 307, 308, 403].includes(status);
+    const alive = status === 200;
     console.log(`[Domain] ${alive ? '✅' : '❌'} ${domain} (HTTP ${status})`);
     return alive;
   } catch (err) {
@@ -401,6 +421,58 @@ async function probeDomain(domain, logger) {
     return false;
   }
 }
+
+
+/**
+ * 并行探测多个域名，返回"最先成功响应"的域名
+ *
+ * 与 Promise.all + find 的区别：
+ *   - Promise.all 要等所有探测完成（含失败/超时）
+ *   - 本函数一旦有域名成功，立即 resolve，不等其他
+ *
+ * 效果：
+ *   - 探测总耗时 ≈ 最快成功域名的耗时
+ *   - 选中的也是响应最快的域名（后续业务请求更快）
+ *
+ * @param {string[]} domains - 候选域名列表
+ * @param {LogCollector} logger
+ * @returns {Promise<string|null>} - 第一个成功的域名，全部失败返回 null
+ */
+async function probeFirstSuccess(domains, logger) {
+  if (!domains || domains.length === 0) return null;
+
+  return new Promise((resolve) => {
+    let pending = domains.length;
+    let settled = false;
+
+    const tryResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    domains.forEach(async (domain) => {
+      let ok = false;
+      try {
+        ok = await probeDomain(domain, logger);
+      } catch (e) {
+        ok = false;
+      }
+
+      if (ok) {
+        tryResolve(domain);
+      }
+
+      pending--;
+      if (pending === 0) {
+        // 全部完成，若还没有成功则返回 null
+        tryResolve(null);
+      }
+    });
+  });
+}
+
+
 
 // ==========================================
 // HTML 兜底方案

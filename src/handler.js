@@ -581,20 +581,21 @@ async function handleMeta555(routeType, parsed) {
 // ==========================================
 
 async function handleStream(routeType, rawEncodedId) {
-  // ===== 防御：Stream 功能被禁用 =====
-  if (CONFIG.ENABLE_STREAM === false) {
-    console.log(`[Stream] ⚠️ Stream 功能已禁用（用户配置）`);
-    return jsonResponse({ streams: [] });
-  }
-
   const parsed = parseId(rawEncodedId);
   console.log(`[Stream] 🔍 source=${parsed.source}, rawId=${parsed.rawId}`);
 
-  // ===== 555 源 =====
+  // ===== 555 源（不受 stream 开关控制，addon 始终提供）=====
   if (parsed.source === '555') {
     return await handleStream555(routeType, parsed);
   }
 
+  // ===== jpyy 源：受 stream 开关控制 =====
+  if (CONFIG.ENABLE_STREAM === false) {
+    console.log(`[Stream] ⚠️ jpyy Stream 已禁用（用户配置），返回空 streams`);
+    return jsonResponse({ streams: [] });
+  }
+
+  // ===== jpyy 源（原逻辑）=====
   let vodId = parsed.vodId;
   let episode = parsed.episode;
 
@@ -644,6 +645,21 @@ async function handleStream(routeType, rawEncodedId) {
   // 通过 fetchVodName 读取（fetchEpisodes 已顺带缓存，零额外请求）
   const movieName = (await fetchVodName(vodId)) || 'JPYY';
 
+  // ===== 计算完整 ID（用户请求时的原始 ID）=====
+  // imdb 请求 → 用 tt{imdbId}；jp 请求 → 用 jp{vodId}
+  const fullId = parsed.source === 'imdb'
+    ? parsed.imdbId
+    : `jp${parsed.vodId}`;
+
+  // ===== 格式化 stream 显示名称 =====
+  const displayName = formatStreamName(
+    movieName,
+    fullId,
+    routeType,
+    parsed.season,
+    parsed.episode
+  );
+
   // ===== 获取播放地址（缓存 10 分钟）=====
   const streams = await fetchStream(vodId, nid);
   if (streams.length === 0) {
@@ -654,7 +670,7 @@ async function handleStream(routeType, rawEncodedId) {
   const stremioStreams = streams.map(s => {
     const isHls = s.url.includes('.m3u8');
     return {
-      name: movieName,
+      name: displayName,
       title: `${s.quality}`,
       url: s.url,
       behaviorHints: {
@@ -692,6 +708,16 @@ async function handleStream555(routeType, parsed) {
   // ===== 1. 获取详情（拿影片名称）=====
   const detail = await fetchDetail555(vodId);
   const movieName = detail?.vodName || `555-${vodId}`;
+
+  // ===== 计算完整 ID 和格式化显示名称 =====
+  const fullId = `dy555${vodId}`;
+  const displayName = formatStreamName(
+    movieName,
+    fullId,
+    routeType,
+    parsed.season,
+    parsed.episode
+  );
 
   // ===== 2. 获取合并后的剧集列表 =====
   const episodes = await fetchEpisodes555(vodId);
@@ -736,7 +762,7 @@ async function handleStream555(routeType, parsed) {
       for (const s of urls) {
         const isHls = s.url.includes('.m3u8');
         allStreams.push({
-          name: movieName,                      // ★ 影片名称
+          name: displayName,
           title: src.sourceName || `线路${src.sid}`,  // ★ 源名称
           url: s.url,
           behaviorHints: {
@@ -809,6 +835,34 @@ function jsonResponse(data, cacheSeconds = 0) {
   }
 
   return new Response(JSON.stringify(data, null, 2), { headers });
+}
+
+/**
+ * 格式化 stream 的 name 字段
+ *
+ * 格式：
+ *   电影：{影片名称} [ {完整ID} ]
+ *   剧集：{影片名称} [ {完整ID} · S{SS}E{EE} ]
+ *
+ * 说明：
+ *   - 完整 ID 是用户请求时的原始 ID（tt/jp/dy555 前缀）
+ *   - movie 类型不加 S/E 信息（单集场景）
+ *   - series 类型 S/E 补零到两位
+ *
+ * @param {string} movieName - 影片名称
+ * @param {string} fullId - 完整 ID（含前缀）
+ * @param {string} routeType - 'movie' 或 'series'
+ * @param {number} season - 季（series 用）
+ * @param {number} episode - 集（series 用）
+ * @returns {string}
+ */
+function formatStreamName(movieName, fullId, routeType, season = 1, episode = 1) {
+  if (routeType === 'movie') {
+    return `${movieName} [ ${fullId} ]`;
+  }
+  const ss = String(season).padStart(2, '0');
+  const ee = String(episode).padStart(2, '0');
+  return `${movieName} [ ${fullId} · S${ss}E${ee} ]`;
 }
 
 //  ==========================================
