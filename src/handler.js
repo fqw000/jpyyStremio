@@ -305,7 +305,7 @@ async function handleSearchInCatalog(type, catalogId, query, skipStr) {
   const items = await searchVideos(query, page, pageSize);
 
   const metas = items.map(item => {
-    const isSeries = item.vodTotal > 0 || item.vodSeries > 0;
+    const isSeries = item.typeId1 !== 1;
     const id = isSeries ? `jp${item.vodId}:1:1` : `jp${item.vodId}`;
     return {
       id,
@@ -803,7 +803,7 @@ async function handleSearch(query) {
   const items = await searchVideos(query);
 
   const results = items.map(item => {
-    const isSeries = item.vodTotal > 0 || item.vodSeries > 0;
+    const isSeries = item.typeId1 !== 1;
     const id = `jp${item.vodId}`;
     return {
       id,

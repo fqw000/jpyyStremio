@@ -407,6 +407,10 @@ export async function searchVideos(keyword, page = 1, pageSize = 24) {
       vodYear: extractYear(item.vodPubdate || item.vodYear),
       vodTotal: item.vodTotal || 0,
       vodSeries: (item.vodTotal || 0) > 0 || (item.vodSeries || 0) > 0 ? 1 : 0,
+      // 👇 新增：透传真实的分类字段
+      typeId: item.typeId || 0,
+      typeId1: item.typeId1 || 0,
+      vodClass: item.vodClass?.trim() || '',
     }));
 
     await setCache(cacheKey, result, 600);
