@@ -413,7 +413,8 @@ async function handleMeta(routeType, rawEncodedId) {
     return jsonResponse({ meta: null });
   }
 
-  const isSeries = detail.vodTotal > 0 || routeType === 'series' || parsed.hasSeasonEpisode;
+  // const isSeries = detail.vodTotal > 0 || routeType === 'series' || parsed.hasSeasonEpisode;
+  const isSeries = detail.typeId1 !== 1;
   const metaId = parsed.source === 'imdb' ? parsed.imdbId : `jp${parsed.vodId}`;
 
   // ===== 构建 Meta =====

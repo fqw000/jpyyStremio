@@ -89,7 +89,8 @@ function buildConfig() {
   return {
     // ===== 资源站配置 =====
     //  资源站的查找方式是 通过fofa 查找 `body="obs.3688baihuo.com/upload/site_ico"` 的站点
-    BASE_DOMAIN: user.bd || '0996zp.com',
+    // BASE_DOMAIN: user.bd || '0996zp.com',
+    BASE_DOMAIN: user.bd || 'x8kb9k8.com',
     DISCOVERY_URL: 'https://jpyy.com',
     FALLBACK_DOMAINS: [
       user.bd || '0996zp.com',
