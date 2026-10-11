@@ -40,9 +40,23 @@ export async function fetchFromTMDB(imdbId, type) {
     }
 
     const findData = await findResp.json();
-    const result = type === 'movie'
+
+    let result = type === 'movie'
       ? findData.movie_results?.[0]
       : findData.tv_results?.[0];
+
+    // ★ type fallback：用户传的 type 与 TMDB 实际类型不符时自动纠正
+    let effectiveType = type;
+    if (!result) {
+      const fallbackResult = type === 'movie'
+        ? findData.tv_results?.[0]
+        : findData.movie_results?.[0];
+      if (fallbackResult) {
+        result = fallbackResult;
+        effectiveType = type === 'movie' ? 'series' : 'movie';
+        console.log(`[TMDB] 🔄 Type fallback: ${type} → ${effectiveType}`);
+      }
+    }
 
     if (!result) {
       console.log(`[TMDB] ⚠️ Not found in TMDB: ${imdbId}`);
@@ -50,20 +64,26 @@ export async function fetchFromTMDB(imdbId, type) {
     }
 
     const tmdbId = result.id;
-    const mediaType = type === 'movie' ? 'movie' : 'tv';
+    const mediaType = effectiveType === 'movie' ? 'movie' : 'tv';
+
     console.log(`[TMDB] ✅ Found: tmdbId=${tmdbId}, title="${result.title || result.name}"`);
 
-    // Step 2: 获取详细信息（包含季数）
-    const detailUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${CONFIG.TMDB_API_KEY}&language=zh-CN`;
+    // Step 2: 获取详细信息（季数 + 演员）
+    const detailUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${CONFIG.TMDB_API_KEY}&language=zh-CN&append_to_response=credits`;
     const detailResp = await fetch(detailUrl);
     const detailData = detailResp.ok ? await detailResp.json() : null;
+
+    // 提取主要演员（前 15 位，用于匹配打分）
+    const cast = (detailData?.credits?.cast || [])
+      .slice(0, 15)
+      .map(c => c.name)
+      .filter(Boolean);
 
     // 构建返回数据
     const meta = {
       imdbId: imdbId,
       tmdbId: tmdbId,
-      type: type,
-      // 中文标题优先
+      type: effectiveType,               // ★ 修正后的类型
       title: result.title || result.name || '',
       originalTitle: result.original_title || result.original_name || '',
       year: extractYear(result.release_date || result.first_air_date),
@@ -75,14 +95,15 @@ export async function fetchFromTMDB(imdbId, type) {
         ? `https://image.tmdb.org/t/p/original${result.backdrop_path}`
         : '',
       rating: result.vote_average || 0,
-      // 剧集特有
+      cast: (detailData?.credits?.cast || [])     // ★ 演员列表
+        .slice(0, 15).map(c => c.name).filter(Boolean),
       seasonCount: detailData?.number_of_seasons || 0,
       episodeCount: detailData?.number_of_episodes || 0,
       seasons: detailData?.seasons?.map(s => ({
         seasonNumber: s.season_number,
         episodeCount: s.episode_count,
         name: s.name,
-        airDate: s.air_date,
+        airDate: s.air_date,           // ★ 已存在，用于提取 seasonYear
       })) || [],
     };
 
@@ -115,13 +136,25 @@ export async function fetchFromCinemeta(imdbId, type) {
 
   for (const host of hosts) {
     try {
-      const url = `${host}/${type}/${imdbId}.json`;
+      // ★ 先按原 type 试，失败则 fallback
+      let effectiveType = type;
+      let url = `${host}/${type}/${imdbId}.json`;
       console.log(`[Cinemeta] 🌐 Trying: ${url}`);
 
-      const resp = await fetch(url);
+      let resp = await fetch(url);
       if (!resp.ok) {
-        console.log(`[Cinemeta] ⚠️ HTTP ${resp.status} from ${host}`);
-        continue;
+        const fallbackType = type === 'movie' ? 'series' : 'movie';
+        const fallbackUrl = `${host}/${fallbackType}/${imdbId}.json`;
+        console.log(`[Cinemeta] 🔄 Fallback: ${fallbackUrl}`);
+        const fallbackResp = await fetch(fallbackUrl);
+        if (fallbackResp.ok) {
+          resp = fallbackResp;
+          effectiveType = fallbackType;
+          url = fallbackUrl;
+        } else {
+          console.log(`[Cinemeta] ⚠️ HTTP ${resp.status} from ${host}`);
+          continue;
+        }
       }
 
       const data = await resp.json();
@@ -145,7 +178,7 @@ export async function fetchFromCinemeta(imdbId, type) {
 
       const result = {
         imdbId: imdbId,
-        type: type,
+        type: effectiveType,             // ★ 修正后的类型
         title: title,
         originalTitle: meta.name || '',
         year: meta.year ? parseInt(meta.year, 10) : null,
@@ -153,7 +186,11 @@ export async function fetchFromCinemeta(imdbId, type) {
         poster: meta.poster || '',
         background: meta.background || meta.poster || '',
         rating: meta.imdbRating || 0,
-        // Cinemeta 的 videos 包含季集信息
+        cast: Array.isArray(meta.cast)          // ★ 演员列表
+          ? meta.cast.slice(0, 15)
+              .map(c => typeof c === 'string' ? c : c?.name)
+              .filter(Boolean)
+          : [],
         videos: meta.videos || [],
         seasonCount: meta.seasonCount || 0,
       };

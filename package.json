@@ -7,6 +7,9 @@
     "deploy": "vercel --prod"
   },
   "devDependencies": {
-    "vercel": "^34.0.0"
+    "vercel": "^63.1.2"
+  },
+  "dependencies": {
+    "pinyin-pro": "^3.29.5"
   }
 }

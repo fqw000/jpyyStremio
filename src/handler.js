@@ -626,16 +626,19 @@ async function handleStream(routeType, rawEncodedId) {
 
   if (parsed.hasSeasonEpisode && episode > 0) {
     const targetEp = episodes.find(ep => parseInt(ep.name, 10) === episode);
-    if (targetEp) {
-      nid = targetEp.nid;
-      console.log(`[Stream] 🎯 Matched ep ${episode}: nid=${nid}`);
-    } else {
-      console.log(`[Stream] ⚠️ Ep ${episode} not found, using first`);
-      nid = episodes[0].nid;
+    if (!targetEp) {
+      // ★ 目标集不存在：不返回其他集，避免"点 S5E10 播第 1 集"
+      console.warn(
+        `[Stream] ❌ Ep ${episode} 未找到（共 ${episodes.length} 集），返回空 streams`
+      );
+      return jsonResponse({ streams: [] });
     }
+    nid = targetEp.nid;
+    console.log(`[Stream] 🎯 Matched ep ${episode}: nid=${nid}`);
   } else {
+    // 无 season/episode 信息（影片级请求）：使用第一集
     nid = episodes[0].nid;
-    console.log(`[Stream] 🎯 Using first: nid=${nid}`);
+    console.log(`[Stream] 🎯 No ep info, using first: nid=${nid}`);
   }
 
   if (!nid) {
