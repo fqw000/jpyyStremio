@@ -14,23 +14,31 @@ import { getBaseDomain, markDomainFailed } from './domain-resolver.js';
 import { getCache, setCache } from './cache.js';
 
 // ==========================================
+// 搜索并发去重控制
+// ==========================================
+const searchInflight = new Map();
+
+
+// ==========================================
 // 分类映射
 // ==========================================
 
 export const CATALOG_TYPE_MAP = {
   // ===== 完整 ID（manifest 声明）=====
-  'jinpai-movie': { typeId: 1, itemType: 'movie' },
-  'jinpai-series': { typeId: 2, itemType: 'series' },
-  'jinpai-variety': { typeId: 3, itemType: 'series' },
-  'jinpai-anime': { typeId: 4, itemType: 'series' },
-  'jinpai-short': { typeId: 88, itemType: 'series' },
+  'jinpai-movie':   { typeId: 1,  typeIds: [], itemType: 'movie' },
+  'jinpai-series':  { typeId: 2,  typeIds: [14, 15, 16, 62, 68], itemType: 'series' },
+  'jinpai-variety': { typeId: 3,  typeIds: [69, 70, 72, 73], itemType: 'series' },
+  // ★ 给动漫增加自定义 path 模板
+  'jinpai-anime':   { typeId: 4,  typeIds: [75, 76, 77], itemType: 'series', path: '/vod/show/id/4/sort/4/sortBy/1/page/{page}' },
+  'jinpai-short':   { typeId: 88, typeIds: [], itemType: 'series' },
 
   // ===== 简写别名（兼容 Stremio 客户端特殊请求）=====
-  'movie': { typeId: 1, itemType: 'movie' },
-  'series': { typeId: 2, itemType: 'series' },
-  'variety': { typeId: 3, itemType: 'series' },
-  'anime': { typeId: 4, itemType: 'series' },
-  'short': { typeId: 88, itemType: 'series' },
+  'movie':   { typeId: 1,  typeIds: [], itemType: 'movie' },
+  'series':  { typeId: 2,  typeIds: [14, 15, 16, 62, 68], itemType: 'series' },
+  'variety': { typeId: 3,  typeIds: [69, 70, 72, 73], itemType: 'series' },
+  // ★ 简写别名也同步加上
+  'anime':   { typeId: 4,  typeIds: [75, 76, 77], itemType: 'series', path: '/vod/show/id/4/sort/4/sortBy/1/page/{page}' },
+  'short':   { typeId: 88, typeIds: [], itemType: 'series' },
 };
 
 // ==========================================
@@ -95,12 +103,14 @@ export async function fetchCatalog(catalogId, skip = 0) {
     return [];
   }
 
-  const { typeId } = config;
+  const { typeId, path } = config;
   const pageSize = 48;
   const page = Math.floor(skip / pageSize) + 1;
 
   const domain = getBaseDomain();
-  const url = `https://${domain}/vod/show/id/${typeId}/page/${page}`;
+  // ★ 生成动态 URL 路径
+  const urlPath = path ? path.replace('{page}', page) : `/vod/show/id/${typeId}/page/${page}`;
+  const url = `https://${domain}${urlPath}`;
 
   let text;
   try {
@@ -110,7 +120,8 @@ export async function fetchCatalog(catalogId, skip = 0) {
       console.log(`[Adapter] ⚠️ 域名失败 (${domain})，尝试切换...`);
       const newDomain = await markDomainFailed(domain);
       if (newDomain && newDomain !== domain) {
-        const newUrl = `https://${newDomain}/vod/show/id/${typeId}/page/${page}`;
+        // ★ 重试时复用计算好的 urlPath
+        const newUrl = `https://${newDomain}${urlPath}`;
         text = await getText(newUrl, { 'RSC': '1', 'Referer': `https://${newDomain}/` });
       } else {
         throw err;
@@ -349,17 +360,34 @@ export async function searchVideos(keyword, page = 1, pageSize = 24) {
   const cleanKeyword = (keyword || '').trim().toLowerCase();
   const cacheKey = `search:${cleanKeyword}:${page}:${pageSize}`;
 
+  // ★ 优化：优先检查是否已有相同的搜索正在进行
+  // 因为 Stremio/Nuvio 会同时发起 5 个分类的搜索请求，
+  // 这里直接拦截，让后 4 个请求连 Redis 都不用查，直接在内存等待。
+  if (searchInflight.has(cacheKey)) {
+    console.log(`[Adapter] ⏳ 等待进行中的搜索（免查缓存）: "${keyword}"`);
+    return searchInflight.get(cacheKey);
+  }
+
+  // 如果没有正在进行的同词搜索，再查缓存
   const cached = await getCache(cacheKey);
   if (cached) {
     console.log(`[Adapter] ✅ Search 缓存命中: "${keyword}" (${cached.length} 条)`);
     return cached;
   }
 
-  console.log(`[Adapter] 🔍 searchVideos: keyword="${keyword}", page=${page}`);
+  // 发起真正的请求，并记录到 inflight
+  const promise = doSearchVideos(cleanKeyword, keyword, page, pageSize, cacheKey)
+    .finally(() => searchInflight.delete(cacheKey));
 
-  if (!keyword || !keyword.trim()) return [];
+  searchInflight.set(cacheKey, promise);
+  return promise;
+}
 
-  const trimmedKeyword = keyword.trim();
+async function doSearchVideos(cleanKeyword, originalKeyword, page, pageSize, cacheKey) {
+  console.log(`[Adapter] 🔍 searchVideos: keyword="${originalKeyword}", page=${page}`);
+  if (!originalKeyword || !originalKeyword.trim()) return [];
+
+  const trimmedKeyword = originalKeyword.trim();
   const { t, sign } = signSearch(trimmedKeyword, page, pageSize);
   const encodedKeyword = encodeURIComponent(trimmedKeyword);
 
@@ -367,7 +395,6 @@ export async function searchVideos(keyword, page = 1, pageSize = 24) {
   const url = `https://${domain}/api/mw-movie/anonymous/video/searchByWord?keyword=${encodedKeyword}&pageNum=${page}&pageSize=${pageSize}&type=false`;
 
   try {
-    // ===== 请求（带域名切换）=====
     let data;
     try {
       data = await getJson(url, {
@@ -383,8 +410,8 @@ export async function searchVideos(keyword, page = 1, pageSize = 24) {
           const newUrl = `https://${newDomain}/api/mw-movie/anonymous/video/searchByWord?keyword=${encodedKeyword}&pageNum=${page}&pageSize=${pageSize}&type=false`;
           data = await getJson(newUrl, {
             'Referer': `https://${newDomain}/`,
-            'sign': sign,      // 签名与域名无关，保持不变
-            't': String(t),    // t 与 sign 配对，保持不变
+            'sign': sign,
+            't': String(t),
           });
         } else {
           throw err;
@@ -407,9 +434,9 @@ export async function searchVideos(keyword, page = 1, pageSize = 24) {
       vodYear: extractYear(item.vodPubdate || item.vodYear),
       vodTotal: item.vodTotal || 0,
       vodSeries: (item.vodTotal || 0) > 0 || (item.vodSeries || 0) > 0 ? 1 : 0,
-      // 👇 新增：透传真实的分类字段
-      typeId: item.typeId || 0,
-      typeId1: item.typeId1 || 0,
+      // ★ 关键修复：强制转换为数字，防止后续使用 === 比对时失效
+      typeId: parseInt(item.typeId, 10) || 0,
+      typeId1: parseInt(item.typeId1, 10) || 0,
       vodClass: item.vodClass?.trim() || '',
     }));
 

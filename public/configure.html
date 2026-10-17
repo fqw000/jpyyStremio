@@ -46,6 +46,7 @@
       <h2><span class="icon">⚙️</span> 高级配置</h2>
       <p class="hint">全部为可选项，不填则使用默认值</p>
 
+
       <!-- 影视源开关 -->
       <div class="form-group">
         <label>
@@ -168,6 +169,19 @@
             </span>
           </label>
         </div>
+
+                   <!-- 过滤含 IP 的播放链接 -->
+      <div class="form-group checkbox-group" style="margin-bottom: 22px;">
+        <label>
+          <input type="checkbox" id="enableBanIp" checked />
+          <span class="checkbox-text">
+            <strong>过滤含 IP 地址的播放链接</strong>
+            <small>自动屏蔽使用了 IPv4 或 IPv6 作为域名的播放链接（这类链接通常绑定了客户端 IP，在第三方播放器中极易失效）。</small>
+          </span>
+        </label>
+      </div>
+      
+      
       </div>
 
       <!-- ============ 555 专属配置 ============ -->

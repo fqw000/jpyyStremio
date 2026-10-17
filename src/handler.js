@@ -15,7 +15,7 @@
  */
 import { generateManifest } from './manifest.js';
 import { CONFIG } from './config.js';
-import { fetchCatalog, fetchDetail, fetchEpisodes, fetchVodName, searchVideos, fetchStream } from './adapter.js';
+import { fetchCatalog, fetchDetail, fetchEpisodes, fetchVodName, searchVideos, fetchStream, CATALOG_TYPE_MAP } from './adapter.js';
 import { resolveImdbToVod } from './imdb-resolver.js';
 import { searchTmdbByTitle, fetchSeasonThumbnails } from './tmdb.js';
 import { probeAndUpdate, getDomainStatus, clearDomainCache } from './domain-resolver.js';
@@ -294,7 +294,6 @@ function parseId(rawEncodedId) {
 // ==========================================
 // Catalog 搜索处理
 // ==========================================
-
 async function handleSearchInCatalog(type, catalogId, query, skipStr) {
   const skip = skipStr ? parseInt(skipStr, 10) : 0;
   console.log(`[Catalog Search] 🔍 type=${type}, catalogId=${catalogId}, query="${query}", skip=${skip}`);
@@ -304,8 +303,37 @@ async function handleSearchInCatalog(type, catalogId, query, skipStr) {
 
   const items = await searchVideos(query, page, pageSize);
 
-  const metas = items.map(item => {
-    const isSeries = item.typeId1 !== 1;
+  const config = CATALOG_TYPE_MAP[catalogId];
+  // 获取当前分类指定的细分 ID 白名单
+  const allowedTypeIds = config && config.typeIds ? config.typeIds : [];
+
+  let filteredItems = [];
+
+  if (allowedTypeIds.length > 0) {
+    // ★ 1. 如果当前分类配置了白名单（剧集/综艺/动漫），严格按 ID 过滤
+    filteredItems = items.filter(item => {
+      const itemTypeId = parseInt(item.typeId, 10);
+      return allowedTypeIds.includes(itemTypeId);
+    });
+    console.log(`[Catalog Search] 🎯 精准匹配 (白名单: ${allowedTypeIds.join(',')}) 命中 ${filteredItems.length} 条`);
+  } else {
+    // ★ 2. 否则（电影/短剧），按基础类型过滤
+    filteredItems = items.filter(item => {
+      const isSeries = item.vodTotal > 0 || item.typeId1 !== 1;
+      return type === 'movie' ? !isSeries : isSeries;
+    });
+
+    // 针对短剧做进一步的文本兜底，防止混入普通剧集
+    if (catalogId === 'jinpai-short') {
+      filteredItems = filteredItems.filter(item => {
+        const cls = item.vodClass || '';
+        return cls.includes('短剧') || cls.includes('微短剧');
+      });
+    }
+  }
+
+  const metas = filteredItems.map(item => {
+    const isSeries = item.vodTotal > 0 || item.typeId1 !== 1;
     const id = isSeries ? `jp${item.vodId}:1:1` : `jp${item.vodId}`;
     return {
       id,
@@ -316,10 +344,8 @@ async function handleSearchInCatalog(type, catalogId, query, skipStr) {
     };
   });
 
-  const filtered = metas.filter(m => m.type === type);
-
-  console.log(`[Catalog Search] ✅ ${filtered.length} results (type=${type}, skip=${skip})`);
-  return jsonResponse({ metas: filtered }, 300);
+  console.log(`[Catalog Search] ✅ ${metas.length} results (catalog=${catalogId}, skip=${skip})`);
+  return jsonResponse({ metas }, 300);
 }
 
 // ==========================================
@@ -671,7 +697,21 @@ async function handleStream(routeType, rawEncodedId) {
     return jsonResponse({ streams: [] });
   }
 
-  const stremioStreams = streams.map(s => {
+  // ★ 过滤含 IP 的 URL
+  let finalStreams = streams;
+  if (CONFIG.ENABLE_BAN_IP) {
+    finalStreams = streams.filter(s => !isIpUrl(s.url));
+    if (finalStreams.length < streams.length) {
+      console.log(`[Stream] 🚫 过滤了 ${streams.length - finalStreams.length} 个 IP 链接`);
+    }
+  }
+
+  if (finalStreams.length === 0) {
+    console.log(`[Stream] ⚠️ No streams available after filtering`);
+    return jsonResponse({ streams: [] });
+  }
+
+  const stremioStreams = finalStreams.map(s => {
     const isHls = s.url.includes('.m3u8');
     return {
       name: displayName,
@@ -764,23 +804,26 @@ async function handleStream555(routeType, parsed) {
     try {
       const urls = await fetchStream555(vodId, src.sid, src.nid);
       for (const s of urls) {
+        // ★ 过滤含 IP 的 URL
+        if (CONFIG.ENABLE_BAN_IP && isIpUrl(s.url)) {
+          console.log(`[555 Stream] 🚫 过滤 IP 链接: ${s.url}`);
+          continue;
+        }
+
         const isHls = s.url.includes('.m3u8');
         allStreams.push({
           name: displayName,
-          title: src.sourceName || `线路${src.sid}`,  // ★ 源名称
+          title: src.sourceName || `线路${src.sid}`,
           url: s.url,
           behaviorHints: {
             notWebReady: false,
-            bingeGroup: `555-${vodId}-${src.sid}`, // 按源分 bingeGroup
+            bingeGroup: `555-${vodId}-${src.sid}`,
           },
           ...(isHls && { type: 'hls' }),
         });
       }
     } catch (err) {
-      console.warn(
-        `[555 Stream] ⚠️ 源 ${src.sid} (${src.sourceName}) 失败: ${err.message}`
-      );
-      // 单源失败不影响其他源
+      console.warn(`[555 Stream] ⚠️ 源 ${src.sid} (${src.sourceName}) 失败: ${err.message}`);
     }
   }
 
@@ -825,6 +868,24 @@ async function handleSearch(query) {
 // ==========================================
 // 辅助函数
 // ==========================================
+
+/**
+ * 判断 URL 的主机名是否为 IPv4 或 IPv6
+ */
+function isIpUrl(url) {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname;
+    // 匹配 IPv4
+    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) return true;
+    // 匹配 IPv6 (Node/V8 会返回带方括号的 host，或者用冒号判断)
+    if (host.includes(':') || (host.startsWith('[') && host.endsWith(']'))) return true;
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
 
 function jsonResponse(data, cacheSeconds = 0) {
   const headers = {

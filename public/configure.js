@@ -19,11 +19,12 @@
 
     const DEFAULTS = {
         baseDomain: '0996zp.com',
-        domain555: 'www.555zxdy.cc',
+        domain555: '555zxdy.cc',
         enableImdb: true,
         enableStream: true,
         enableJpyy: true,
         enable555: true,
+        enableBanIp: true,
     };
 
     const ALL_JPYY_CATEGORIES = ['movie', 'series', 'variety', 'anime', 'short'];
@@ -44,6 +45,7 @@
         domain555: $('domain555'),
         enableImdb: $('enableImdb'),
         enableStream: $('enableStream'),
+        enableBanIp: $('enableBanIp'),
         toggleTmdbKey: $('toggleTmdbKey'),
 
         jpyySection: $('jpyySection'),
@@ -140,6 +142,9 @@
             }
             if (!el.enableStream.checked) {
                 config.stream = false;
+            }
+            if (!el.enableBanIp.checked) {
+                config.banIp = false;
             }
         }
 
@@ -299,6 +304,7 @@
         el.tmdbApiKey.type = 'password';
         el.enableImdb.checked = DEFAULTS.enableImdb;
         el.enableStream.checked = DEFAULTS.enableStream;
+        el.enableBanIp.checked = DEFAULTS.enableBanIp;
 
         document.querySelectorAll('.category-cb').forEach(cb => {
             cb.checked = true;
@@ -375,7 +381,7 @@
     });
 
     // ===== 输入变化时自动更新（如果结果卡片已显示）=====
-    [el.baseDomain, el.tmdbApiKey, el.domain555, el.enableImdb, el.enableStream]
+    [el.baseDomain, el.tmdbApiKey, el.domain555, el.enableImdb, el.enableStream, el.enableBanIp]
         .filter(Boolean)
         .forEach((input) => {
             input.addEventListener('change', () => {

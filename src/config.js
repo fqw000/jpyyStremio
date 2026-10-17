@@ -124,6 +124,8 @@ function buildConfig() {
     // ===== 功能开关 =====
     ENABLE_IMDB: user.imdb !== false,
     ENABLE_STREAM: user.stream !== false,
+    ENABLE_BAN_IP: user.banIp !== false,   // 默认不返回含ip校验的stream
+
 
     // ===== 支持类型（新增）=====
     ENABLED_CATEGORIES: enabledCategories,
